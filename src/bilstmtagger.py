@@ -208,7 +208,7 @@ if __name__ == '__main__':
             output = list()
             tags = tagger.tag_sent(sent)
             if options.eval_format:
-                 [output.append('\t'.join([sent[i][0], sent[i][1],sent[i][2], tags[i]])) for i in xrange(len(tags))]
+                 [output.append(' '.join([sent[i][0], sent[i][1],sent[i][2], tags[i]])) for i in xrange(len(tags))]
             else:
                 [output.append('\t'.join([sent[i][0],sent[i][1],tags[i]])) for i in xrange(len(tags))]
             writer.write('\n'.join(output))
