@@ -125,16 +125,17 @@ class Tagger:
                     tagged = 0
 
                     good = bad = 0.0
-                    dev = list(self.read(options.dev_file))
-                    for sent in dev:
-                        tags = self.tag_sent(sent)
-                        golds = [b for w, t, b in sent]
-                        for go, gu in zip(golds, tags):
-                            if go == gu:
-                                good += 1
-                            else:
-                                bad += 1
-                    print '\ndev accuracy:', good / (good + bad)
+                    if options.dev_file:
+                        dev = list(self.read(options.dev_file))
+                        for sent in dev:
+                            tags = self.tag_sent(sent)
+                            golds = [b for w, t, b in sent]
+                            for go, gu in zip(golds, tags):
+                                if go == gu:
+                                    good += 1
+                                else:
+                                    bad += 1
+                        print '\ndev accuracy:', good / (good + bad)
                 ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in s]
                 ps = [self.vt.w2i[p] for w, p, bio in s]
                 bs = [self.vb.w2i[bio] for w, p, bio in s]
