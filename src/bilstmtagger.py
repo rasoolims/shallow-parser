@@ -20,10 +20,6 @@ class Tagger:
         self.ntags = self.vt.size()
         self.nBios = self.vb.size()
 
-        print 'writing params file'
-        with open(os.path.join(options.output, options.params), 'w') as paramsfp:
-            pickle.dump((words, tags, bios, options), paramsfp)
-
         self.model = Model()
         self.trainer = AdamTrainer(self.model)
 
@@ -185,6 +181,10 @@ if __name__ == '__main__':
         tags.append('_START_')
         bios.append('_START_')
 
+        print 'writing params file'
+        with open(os.path.join(options.output, options.params), 'w') as paramsfp:
+            pickle.dump((words, tags, bios, options), paramsfp)
+
         Tagger(options, words, tags, bios).train()
 
         options.model = os.path.join(options.output,options.model+'_'+str(options.epochs-1))
@@ -208,8 +208,8 @@ if __name__ == '__main__':
             output = list()
             tags = tagger.tag_sent(sent)
             if options.eval_format:
-                 [output.append('\t'.join(sent[i][0], sent[i][1],sent[i][2], tags[i])) for i in xrange(len(tags))]
+                 [output.append('\t'.join([sent[i][0], sent[i][1],sent[i][2], tags[i]])) for i in xrange(len(tags))]
             else:
-                [output.append('\t'.join(sent[i][0],sent[i][1],tags[i])) for i in xrange(len(tags))]
+                [output.append('\t'.join([sent[i][0],sent[i][1],tags[i]])) for i in xrange(len(tags))]
             writer.write('\n'.join(output))
         print 'done!'
