@@ -212,4 +212,5 @@ if __name__ == '__main__':
             else:
                 [output.append('\t'.join([sent[i][0],sent[i][1],tags[i]])) for i in xrange(len(tags))]
             writer.write('\n'.join(output))
+            writer.write('\n\n')
         print 'done!'
