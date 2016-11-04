@@ -1,7 +1,6 @@
 from collections import defaultdict
 from itertools import count
 
-
 class Vocab:
     def __init__(self, w2i=None):
         if w2i is None: w2i = defaultdict(count(0).next)
@@ -26,7 +25,6 @@ class CorpusReader:
     def __iter__(self):
         for line in file(self.fname):
             line = line.strip().split()
-            # line = [' ' if x == '' else x for x in line]
             yield line
 
 
