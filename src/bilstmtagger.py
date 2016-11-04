@@ -40,16 +40,6 @@ class Tagger:
                          LSTMBuilder(1, inp_dim, options.lstm_dims, self.model)]
 
     @staticmethod
-    def write(sentences,fname):
-        writer = codecs.open(fname,'w')
-        for sent in sentences:
-            for s in sent:
-                writer.write('\t'.join(s))
-                writer.write('\n')
-            writer.write('\n')
-        writer.close()
-
-    @staticmethod
     def read(fname):
         sent = []
         for line in file(fname):
@@ -213,13 +203,13 @@ if __name__ == '__main__':
 
         test = list(Tagger.read(options.conll_test))
         print 'loaded',len(test),'sentences!'
-
+        writer = codecs.open(options.outfile, 'w')
         for sent in test:
+            output = list()
             tags = tagger.tag_sent(sent)
             if options.eval_format:
-                sent = [(sent[i][0], sent[i][1],sent[i][2], tags[i]) for i in xrange(len(tags))]
+                 [output.append('\t'.join(sent[i][0], sent[i][1],sent[i][2], tags[i])) for i in xrange(len(tags))]
             else:
-                sent = [(sent[i][0],sent[i][1],tags[i]) for i in xrange(len(tags))]
-        print 'writing predictions'
-        Tagger.write(test, options.outfile)
+                [output.append('\t'.join(sent[i][0],sent[i][1],tags[i])) for i in xrange(len(tags))]
+            writer.write('\n'.join(output))
         print 'done!'
