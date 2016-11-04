@@ -31,7 +31,27 @@ class Tagger:
         else:
             self.pO = self.model.add_parameters((self.ntags, options.lstm_dims * 2))
 
-        inp_dim = options.wembedding_dims + options.pembedding_dims
+        self.edim = 0
+        self.external_embedding = None
+        if options.external_embedding is not None:
+            external_embedding_fp = open(options.external_embedding, 'r')
+            external_embedding_fp.readline()
+            self.external_embedding = {line.split(' ')[0]: [float(f) for f in line.strip().split(' ')[1:]] for line in
+                                       external_embedding_fp}
+            external_embedding_fp.close()
+            self.edim = len(self.external_embedding.values()[0])
+            noextrn = [0.0 for _ in xrange(self.edim)]
+            self.extrnd = {word: i + 3 for i, word in enumerate(self.external_embedding)}
+            self.extrn_lookup = self.model.add_lookup_parameters((len(self.external_embedding) + 3, self.edim))
+            self.extrn_lookup.set_updated(False)
+            for word, i in self.extrnd.iteritems():
+                self.extrn_lookup.init_row(i, self.external_embedding[word])
+            self.extrnd['_UNK_'] = 1
+            self.extrnd['_START_'] = 2
+            self.extrn_lookup.init_row(1, noextrn)
+            print 'Loaded external embedding. Vector dimensions:', self.edim
+
+        inp_dim = options.wembedding_dims + options.pembedding_dims + self.edim
         self.builders = [LSTMBuilder(1, inp_dim, options.lstm_dims, self.model),
                          LSTMBuilder(1, inp_dim, options.lstm_dims, self.model)]
 
@@ -53,7 +73,10 @@ class Tagger:
         f_init, b_init = [b.initial_state() for b in self.builders]
         wembs = [noise(self.WE[w], 0.1) for w in words]
         pembs = [noise(self.PE[t],0.001) for t in tags]
-        inputs = [concatenate([wembs[i], pembs[i]]) for i in xrange(len(words))]
+        evec = [self.extrn_lookup[
+                    self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[1] if self.edim > 0 else None
+                for w in words]
+        inputs = [concatenate(filter(None, [wembs[i], pembs[i],evec[i]])) for i in xrange(len(words))]
         fw = [x.output() for x in f_init.add_inputs(inputs)]
         bw = [x.output() for x in b_init.add_inputs(reversed(inputs))]
 
@@ -78,7 +101,8 @@ class Tagger:
         f_init, b_init = [b.initial_state() for b in self.builders]
         wembs = [self.WE[self.vw.w2i.get(w, self.UNK_W)] for w, t, bio in sent]
         pembs = [self.PE[self.vt.w2i.get(t, self.UNK_P)] for w, t, bio in sent]
-        inputs = [concatenate([wembs[i], pembs[i]]) for i in xrange(len(sent))]
+        evec = [self.extrn_lookup[self.extrnd[w]] if self.edim > 0 and  w in self.extrnd else self.extrn_lookup[1] if self.edim>0 else None for w, t, bio in sent]
+        inputs = [concatenate(filter(None, [wembs[i], pembs[i], evec[i]])) for i in xrange(len(sent))]
         fw = [x.output() for x in f_init.add_inputs(inputs)]
         bw = [x.output() for x in b_init.add_inputs(reversed(inputs))]
 
