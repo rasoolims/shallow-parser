@@ -199,7 +199,7 @@ if __name__ == '__main__':
         options.model = os.path.join(options.output,options.model+'_'+str(options.epochs-1))
         options.params =  os.path.join(options.output,options.params)
 
-    if options.conll_test != '' and options.params != '' and options.model != '' and options.output != '' and options.outfile != '':
+    if options.conll_test != '' and options.params != '' and options.model != '' and options.outfile != '':
         print options.model, options.params
         print 'reading params'
         with open(options.params, 'r') as paramsfp:
