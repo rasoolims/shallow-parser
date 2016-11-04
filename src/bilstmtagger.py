@@ -27,9 +27,9 @@ class Tagger:
         self.PE = self.model.add_lookup_parameters((self.ntags, options.pembedding_dims))
         if self.MLP:
             self.pH = self.model.add_parameters((options.hidden_units, options.lstm_dims * 2))
-            self.pO = self.model.add_parameters((self.ntags, options.hidden_units))
+            self.pO = self.model.add_parameters((self.nBios, options.hidden_units))
         else:
-            self.pO = self.model.add_parameters((self.ntags, options.lstm_dims * 2))
+            self.pO = self.model.add_parameters((self.nBios, options.lstm_dims * 2))
 
         self.edim = 0
         self.external_embedding = None
