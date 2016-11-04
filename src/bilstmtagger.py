@@ -210,7 +210,7 @@ if __name__ == '__main__':
         print options.model
         tagger.load(options.model)
 
-        test = list(Tagger.read(options.dev_file))
+        test = list(Tagger.read(options.conll_test))
         print 'loaded',len(test),'sentences!'
 
         for sent in test:
