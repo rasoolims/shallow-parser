@@ -124,6 +124,7 @@ class Tagger:
 
     def train(self):
         tagged = loss = 0
+        best_dev = float('-inf')
         for ITER in xrange(self.options.epochs):
             print 'ITER', ITER
             random.shuffle(train)
@@ -145,7 +146,13 @@ class Tagger:
                                     good += 1
                                 else:
                                     bad += 1
-                        print '\ndev accuracy:', good / (good + bad)
+                        res = good / (good + bad)
+                        if res>best_dev:
+                            print '\ndev accuracy (saving):', res
+                            best_dev = res
+                            self.save(os.path.join(options.output, options.model))
+                        else:
+                            print '\ndev accuracy:', res
                 ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in s]
                 ps = [self.vt.w2i[p] for w, p, bio in s]
                 bs = [self.vb.w2i[bio] for w, p, bio in s]
