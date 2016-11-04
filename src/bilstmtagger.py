@@ -201,7 +201,7 @@ if __name__ == '__main__':
         options.params =  os.path.join(options.output,options.params)
 
     if options.conll_test != '' and options.params != '' and options.model != '' and options.outfile != '':
-        print options.model, options.params
+        print options.model, options.params, options.eval_format
         print 'reading params'
         with open(options.params, 'r') as paramsfp:
             words, tags, bios, opt = pickle.load(paramsfp)
