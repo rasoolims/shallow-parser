@@ -171,6 +171,7 @@ class Tagger:
         parser.add_option('--lstmdims', type='int', dest='lstm_dims', default=200)
         parser.add_option('--outdir', type='string', dest='output', default='')
         parser.add_option('--outfile', type='string', dest='outfile', default='')
+        parser.add_option("--eval", action="store_true", dest="eval_format", default=False)
         return parser.parse_args()
 
 #todo add external embeddings
@@ -215,7 +216,10 @@ if __name__ == '__main__':
 
         for sent in test:
             tags = tagger.tag_sent(sent)
-            sent = [(sent[i][0],sent[i][1],tags[i]) for i in xrange(len(tags))]
+            if options.eval_format:
+                sent = [(sent[i][0], sent[i][1],sent[i][2], tags[i]) for i in xrange(len(tags))]
+            else:
+                sent = [(sent[i][0],sent[i][1],tags[i]) for i in xrange(len(tags))]
         print 'writing predictions'
         Tagger.write(test, options.outfile)
         print 'done!'
