@@ -125,7 +125,7 @@ class Tagger:
         tagged = loss = 0
         best_dev = float('-inf')
         errs = []
-        err_num = 0
+        err_num = 1
         for ITER in xrange(self.options.epochs):
             print 'ITER', ITER
             random.shuffle(train)
@@ -148,6 +148,7 @@ class Tagger:
                     renew_cg()
                     if err_num % 20 == 0:
                         self.trainer.status()
+                        err_num+=1
                         print loss / tagged
                         loss = 0
                         tagged = 0
