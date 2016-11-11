@@ -69,6 +69,7 @@ class Tagger:
         if sent: yield  sent
 
     def build_tagging_graph(self, words, tags, bios):
+        renew_cg()
         f_init, b_init = [b.initial_state() for b in self.builders]
         wembs = [noise(self.WE[w], 0.1) for w in words]
         pembs = [noise(self.PE[t],0.001) for t in tags]
@@ -124,61 +125,44 @@ class Tagger:
     def train(self):
         tagged = loss = 0
         best_dev = float('-inf')
-        errs = []
-        err_num = 1
         for ITER in xrange(self.options.epochs):
             print 'ITER', ITER
             random.shuffle(train)
             for i, s in enumerate(train, 1):
+                if i % 1000 == 0:
+                    self.trainer.status()
+                    print loss / tagged
+                    loss = 0
+                    tagged = 0
+
+                    good = bad = 0.0
+                    if options.dev_file:
+                        dev = list(self.read(options.dev_file))
+                        for sent in dev:
+                            tags = self.tag_sent(sent)
+                            golds = [b for w, t, b in sent]
+                            for go, gu in zip(golds, tags):
+                                if go == gu:
+                                    good += 1
+                                else:
+                                    bad += 1
+                        res = good / (good + bad)
+                        if res>best_dev:
+                            print '\ndev accuracy (saving):', res
+                            best_dev = res
+                            self.save(os.path.join(options.output, options.model))
+                        else:
+                            print '\ndev accuracy:', res
                 ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in s]
                 ps = [self.vt.w2i[p] for w, p, bio in s]
                 bs = [self.vb.w2i[bio] for w, p, bio in s]
                 sum_errs = self.build_tagging_graph(ws, ps, bs)
-                #squared = -sum_errs  # * sum_errs
-                #loss += sum_errs.scalar_value()
-                errs.append(sum_errs)
+                squared = -sum_errs  # * sum_errs
+                loss += sum_errs.scalar_value()
                 tagged += len(ps)
-                if len(errs)>50:
-                    eerrs = esum(errs)
-                    scalar_loss = eerrs.scalar_value()
-                    eerrs.backward()
-                    self.trainer.update()
-                    errs = []
-                    err_num+=1
-                    renew_cg()
-                    if err_num % 20 == 0:
-                        self.trainer.status()
-                        err_num+=1
-                        print loss / tagged
-                        loss = 0
-                        tagged = 0
-
-                        good = bad = 0.0
-                        if options.dev_file:
-                            dev = list(self.read(options.dev_file))
-                            for sent in dev:
-                                tags = self.tag_sent(sent)
-                                golds = [b for w, t, b in sent]
-                                for go, gu in zip(golds, tags):
-                                    if go == gu:
-                                        good += 1
-                                    else:
-                                        bad += 1
-                            res = good / (good + bad)
-                            if res > best_dev:
-                                print '\ndev accuracy (saving):', res
-                                best_dev = res
-                                self.save(os.path.join(options.output, options.model))
-                            else:
-                                print '\ndev accuracy:', res
-            print 'saving current iteration'
-            if len(errs) > 0:
-                eerrs = esum(errs)
-                scalar_loss = eerrs.scalar_value()
-                eerrs.backward()
+                sum_errs.backward()
                 self.trainer.update()
-                errs = []
-                renew_cg()
+            print 'saving current iteration'
             self.save(os.path.join(options.output, options.model + '_' + str(ITER)))
 
     def load(self, f):
@@ -207,6 +191,7 @@ class Tagger:
         parser.add_option("--eval", action="store_true", dest="eval_format", default=False)
         return parser.parse_args()
 
+#todo add external embeddings
 if __name__ == '__main__':
     (options, args) = Tagger.parse_options()
     if options.conll_train != '' and options.output != '':
