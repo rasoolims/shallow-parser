@@ -25,11 +25,12 @@ class Tagger:
 
         self.WE = self.model.add_lookup_parameters((self.nwords, options.wembedding_dims))
         self.PE = self.model.add_lookup_parameters((self.ntags, options.pembedding_dims))
+        self.LE = self.model.add_lookup_parameters((self.nBios+1, options.lembedding_dims)) # label embedding, 1 for start symbol
         if self.MLP:
-            self.pH = self.model.add_parameters((options.hidden_units, options.lstm_dims * 2))
+            self.pH = self.model.add_parameters((options.hidden_units, options.his_lstmdims))
             self.pO = self.model.add_parameters((self.nBios, options.hidden_units))
         else:
-            self.pO = self.model.add_parameters((self.nBios, options.lstm_dims * 2))
+            self.pO = self.model.add_parameters((self.nBios, options.his_lstmdims))
 
         self.edim = 0
         self.external_embedding = None
@@ -52,8 +53,10 @@ class Tagger:
             print 'Loaded external embedding. Vector dimensions:', self.edim
 
         inp_dim = options.wembedding_dims + options.pembedding_dims + self.edim
+        history_input_dim = options.lembedding_dims +  2 * options.lstm_dims
         self.builders = [LSTMBuilder(1, inp_dim, options.lstm_dims, self.model),
                          LSTMBuilder(1, inp_dim, options.lstm_dims, self.model)]
+        self.history_lstm = LSTMBuilder(1, history_input_dim, options.his_lstmdims, self.model)
 
     @staticmethod
     def read(fname):
@@ -71,6 +74,7 @@ class Tagger:
     def build_tagging_graph(self, words, tags, bios):
         renew_cg()
         f_init, b_init = [b.initial_state() for b in self.builders]
+        hist_init = self.history_lstm.initial_state()
         wembs = [noise(self.WE[w], 0.1) for w in words]
         pembs = [noise(self.PE[t],0.001) for t in tags]
         evec = [self.extrn_lookup[
@@ -86,12 +90,15 @@ class Tagger:
         else:
             O = parameter(self.pO)
         errs = []
-        for f, b, bio in zip(fw, reversed(bw), bios):
+
+        for f, b, bio, i in zip(fw, reversed(bw), bios, xrange(len(bios))):
             f_b = concatenate([f, b])
+            b_i = self.LE[bios[i-1]] if i>0 else self.LE[self.nBios]
+            hist_init = hist_init.add_input(concatenate([f_b, b_i]))
             if self.MLP:
-                r_bio = O * (tanh(H * f_b))
+                r_bio = O * (tanh(H * hist_init.output()))
             else:
-                r_bio = O * f_b
+                r_bio = O * hist_init.output()
             err = pickneglogsoftmax(r_bio, bio)
             errs.append(err)
         return esum(errs)
@@ -99,6 +106,7 @@ class Tagger:
     def tag_sent(self, sent):
         renew_cg()
         f_init, b_init = [b.initial_state() for b in self.builders]
+        hist_init = self.history_lstm.initial_state()
         wembs = [self.WE[self.vw.w2i.get(w, self.UNK_W)] for w, t, bio in sent]
         pembs = [self.PE[self.vt.w2i.get(t, self.UNK_P)] for w, t, bio in sent]
         evec = [self.extrn_lookup[self.extrnd[w]] if self.edim > 0 and  w in self.extrnd else self.extrn_lookup[1] if self.edim>0 else None for w, t, bio in sent]
@@ -112,14 +120,19 @@ class Tagger:
         else:
             O = parameter(self.pO)
         bios = []
+        last = None
         for f, b in zip(fw, reversed(bw)):
+            f_b = concatenate([f, b])
+            b_i = self.LE[last] if last!=None else self.LE[self.nBios]
+            hist_init = hist_init.add_input(concatenate([f_b, b_i]))
+
             if self.MLP:
-                r_t = O * (tanh(H * concatenate([f, b])))
+                r_t = O * (tanh(H * hist_init.output()))
             else:
-                r_t = O * concatenate([f, b])
+                r_t = O * hist_init.output()
             out = softmax(r_t)
-            chosen = np.argmax(out.npvalue())
-            bios.append(self.vb.i2w[chosen])
+            last = np.argmax(out.npvalue())
+            bios.append(self.vb.i2w[last])
         return bios
 
     def train(self):
@@ -182,16 +195,17 @@ class Tagger:
         parser.add_option('--model', dest='model', help='Load/Save model file', metavar='FILE', default='model.model')
         parser.add_option('--wembedding', type='int', dest='wembedding_dims', default=128)
         parser.add_option('--pembedding', type='int', dest='pembedding_dims', default=30)
+        parser.add_option('--lembedding', type='int', dest='lembedding_dims', default=30)
         parser.add_option('--epochs', type='int', dest='epochs', default=5)
         parser.add_option('--hidden', type='int', dest='hidden_units', default=200)
         parser.add_option('--hidden2', type='int', dest='hidden2_units', default=0)
         parser.add_option('--lstmdims', type='int', dest='lstm_dims', default=200)
+        parser.add_option('--his_lstmdims', type='int', dest='his_lstmdims', default=200)
         parser.add_option('--outdir', type='string', dest='output', default='')
         parser.add_option('--outfile', type='string', dest='outfile', default='')
         parser.add_option("--eval", action="store_true", dest="eval_format", default=False)
         return parser.parse_args()
 
-#todo add external embeddings
 if __name__ == '__main__':
     (options, args) = Tagger.parse_options()
     if options.conll_train != '' and options.output != '':
