@@ -9,6 +9,9 @@ import util
 class Tagger:
     def __init__(self, options, words, tags, bios):
         self.options = options
+        self.activations = {'tanh': tanh, 'sigmoid': logistic, 'relu': rectify,
+                            'tanh3': (lambda x: tanh(cwise_multiply(cwise_multiply(x, x), x)))}
+        self.activation = self.activations[options.activation]
         self.vw = util.Vocab.from_corpus([words])
         self.vt = util.Vocab.from_corpus([tags])
         self.vb = util.Vocab.from_corpus([bios])
@@ -93,7 +96,7 @@ class Tagger:
             f_b = concatenate([f, b])
             b_i = self.LE[bios[i-1]] if i>0 else self.LE[self.nBios]
             hist_init = hist_init.add_input(concatenate([f_b, b_i]))
-            r_bio = O * (rectify(H2*rectify(H1 * hist_init.output()))) if H2!=None else O * (rectify(H1 * hist_init.output()))
+            r_bio = O * (self.activation(H2*self.activation(H1 * hist_init.output()))) if H2!=None else O * (self.activation(H1 * hist_init.output()))
             err = pickneglogsoftmax(r_bio, bio)
             errs.append(err)
         return esum(errs)
@@ -119,7 +122,7 @@ class Tagger:
             b_i = self.LE[last] if last!=None else self.LE[self.nBios]
             hist_init = hist_init.add_input(concatenate([f_b, b_i]))
 
-            r_t = O * (rectify(H2*rectify(H1 * hist_init.output()))) if H2!=None else O * (rectify(H1 * hist_init.output()))
+            r_t = O * (self.activation(H2*self.activation(H1 * hist_init.output()))) if H2!=None else O * (self.activation(H1 * hist_init.output()))
             out = softmax(r_t)
             last = np.argmax(out.npvalue())
             bios.append(self.vb.i2w[last])
@@ -194,6 +197,7 @@ class Tagger:
         parser.add_option('--outdir', type='string', dest='output', default='')
         parser.add_option('--outfile', type='string', dest='outfile', default='')
         parser.add_option("--eval", action="store_true", dest="eval_format", default=False)
+        parser.add_option("--activation", type="string", dest="activation", default="tanh")
         return parser.parse_args()
 
 if __name__ == '__main__':
