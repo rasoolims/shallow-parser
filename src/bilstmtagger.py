@@ -88,7 +88,7 @@ class Tagger:
         bw = [x.output() for x in b_init.add_inputs(reversed(inputs))]
 
         H1 = parameter(self.pH1)
-        H2 = parameter(self.pH2) if self.PH2!=None else None
+        H2 = parameter(self.pH2) if self.pH2!=None else None
         O = parameter(self.pO)
         errs = []
 
@@ -113,7 +113,7 @@ class Tagger:
         bw = [x.output() for x in b_init.add_inputs(reversed(inputs))]
 
         H1 = parameter(self.pH1)
-        H2 = parameter(self.pH2) if self.PH2!=None else None
+        H2 = parameter(self.pH2) if self.pH2!=None else None
         O = parameter(self.pO)
         bios = []
         last = None
