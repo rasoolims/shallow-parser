@@ -30,8 +30,8 @@ class Tagger:
         self.LE = self.model.add_lookup_parameters((self.nBios+1, options.lembedding_dims)) # label embedding, 1 for start symbol
         self.pH1 = self.model.add_parameters((options.hidden_units, options.his_lstmdims))
         self.pH2 = self.model.add_parameters((options.hidden2_units, options.hidden_units)) if options.hidden2_units>0 else None
-        self.hdim = options.hidden2_units if options.hidden2_units>0 else options.hidden_units
-        self.pO = self.model.add_parameters((self.nBios, self.hdim))
+        hdim = options.hidden2_units if options.hidden2_units>0 else options.hidden_units
+        self.pO = self.model.add_parameters((self.nBios, hdim))
 
         self.edim = 0
         self.external_embedding = None
@@ -191,7 +191,7 @@ class Tagger:
         parser.add_option('--lembedding', type='int', dest='lembedding_dims', default=30)
         parser.add_option('--epochs', type='int', dest='epochs', default=5)
         parser.add_option('--hidden', type='int', dest='hidden_units', default=200)
-        parser.add_option('--hidden2', type='int', dest='hidden2_units', default=200)
+        parser.add_option('--hidden2', type='int', dest='hidden2_units', default=0)
         parser.add_option('--lstmdims', type='int', dest='lstm_dims', default=200)
         parser.add_option('--his_lstmdims', type='int', dest='his_lstmdims', default=200)
         parser.add_option('--outdir', type='string', dest='output', default='')
