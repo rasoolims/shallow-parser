@@ -42,9 +42,10 @@ class Tagger:
             self.extrnd = {word: i + 3 for i, word in enumerate(self.external_embedding)}
             self.extrn_lookup = self.model.add_lookup_parameters((len(self.external_embedding) + 3, self.edim))
             self.extrn_lookup.set_updated(False)
+            word_set = set(words)
             for word, i in self.extrnd.iteritems():
                 self.extrn_lookup.init_row(i, self.external_embedding[word])
-                if self.vw.w2i.has_key(word):
+                if word in word_set:
                     self.WE.init_row(self.vw.w2i.get(word), self.external_embedding[word])
             self.extrnd['_UNK_'] = 1
             self.extrnd['_START_'] = 2
