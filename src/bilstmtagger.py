@@ -31,7 +31,7 @@ class Tagger:
         self.pH1 = self.model.add_parameters((options.hidden_units, options.his_lstmdims))
         self.pH2 = self.model.add_parameters((options.hidden2_units, options.hidden_units)) if options.hidden2_units>0 else None
         self.hdim = options.hidden2_units if options.hidden2_units>0 else options.hidden_units
-        self.pO = self.model.add_parameters((self.nBios, options.hidden2_units))
+        self.pO = self.model.add_parameters((self.nBios, self.hdim))
 
         self.edim = 0
         self.external_embedding = None
