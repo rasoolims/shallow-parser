@@ -25,8 +25,9 @@ class Tagger:
         self.WE = self.model.add_lookup_parameters((self.nwords, options.wembedding_dims))
         self.PE = self.model.add_lookup_parameters((self.ntags, options.pembedding_dims))
         self.LE = self.model.add_lookup_parameters((self.nBios+1, options.lembedding_dims)) # label embedding, 1 for start symbol
-        self.pH = self.model.add_parameters((options.hidden_units, options.his_lstmdims))
-        self.pO = self.model.add_parameters((self.nBios, options.hidden_units))
+        self.pH1 = self.model.add_parameters((options.hidden_units, options.his_lstmdims))
+        self.pH2 = self.model.add_parameters((options.hidden2_units, options.hidden_units))
+        self.pO = self.model.add_parameters((self.nBios, options.hidden2_units))
 
         self.edim = 0
         self.external_embedding = None
@@ -80,7 +81,8 @@ class Tagger:
         fw = [x.output() for x in f_init.add_inputs(inputs)]
         bw = [x.output() for x in b_init.add_inputs(reversed(inputs))]
 
-        H = parameter(self.pH)
+        H1 = parameter(self.pH1)
+        H2 = parameter(self.pH2)
         O = parameter(self.pO)
         errs = []
 
@@ -88,7 +90,7 @@ class Tagger:
             f_b = concatenate([f, b])
             b_i = self.LE[bios[i-1]] if i>0 else self.LE[self.nBios]
             hist_init = hist_init.add_input(concatenate([f_b, b_i]))
-            r_bio = O * (rectify(H * hist_init.output()))
+            r_bio = O * (rectify(H2*rectify(H1 * hist_init.output())))
             err = pickneglogsoftmax(r_bio, bio)
             errs.append(err)
         return esum(errs)
@@ -104,7 +106,8 @@ class Tagger:
         fw = [x.output() for x in f_init.add_inputs(inputs)]
         bw = [x.output() for x in b_init.add_inputs(reversed(inputs))]
 
-        H = parameter(self.pH)
+        H1 = parameter(self.pH1)
+        H2 = parameter(self.pH2)
         O = parameter(self.pO)
         bios = []
         last = None
@@ -113,7 +116,7 @@ class Tagger:
             b_i = self.LE[last] if last!=None else self.LE[self.nBios]
             hist_init = hist_init.add_input(concatenate([f_b, b_i]))
 
-            r_t = O * (rectify(H * hist_init.output()))
+            r_t = O * (rectify(H2*rectify(H1 * hist_init.output())))
             out = softmax(r_t)
             last = np.argmax(out.npvalue())
             bios.append(self.vb.i2w[last])
@@ -182,7 +185,7 @@ class Tagger:
         parser.add_option('--lembedding', type='int', dest='lembedding_dims', default=30)
         parser.add_option('--epochs', type='int', dest='epochs', default=5)
         parser.add_option('--hidden', type='int', dest='hidden_units', default=200)
-        parser.add_option('--hidden2', type='int', dest='hidden2_units', default=0)
+        parser.add_option('--hidden2', type='int', dest='hidden2_units', default=200)
         parser.add_option('--lstmdims', type='int', dest='lstm_dims', default=200)
         parser.add_option('--his_lstmdims', type='int', dest='his_lstmdims', default=200)
         parser.add_option('--outdir', type='string', dest='output', default='')
