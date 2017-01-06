@@ -44,6 +44,8 @@ class Tagger:
             self.extrn_lookup.set_updated(False)
             for word, i in self.extrnd.iteritems():
                 self.extrn_lookup.init_row(i, self.external_embedding[word])
+                if self.vw.w2i.has_key(word):
+                    self.WE.init_row(self.vw.w2i.get(word), self.external_embedding[word])
             self.extrnd['_UNK_'] = 1
             self.extrnd['_START_'] = 2
             self.extrn_lookup.init_row(1, noextrn)
