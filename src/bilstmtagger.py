@@ -9,7 +9,6 @@ import util
 class Tagger:
     def __init__(self, options, words, tags, bios):
         self.options = options
-        self.MLP = True
         self.vw = util.Vocab.from_corpus([words])
         self.vt = util.Vocab.from_corpus([tags])
         self.vb = util.Vocab.from_corpus([bios])
@@ -26,11 +25,8 @@ class Tagger:
         self.WE = self.model.add_lookup_parameters((self.nwords, options.wembedding_dims))
         self.PE = self.model.add_lookup_parameters((self.ntags, options.pembedding_dims))
         self.LE = self.model.add_lookup_parameters((self.nBios+1, options.lembedding_dims)) # label embedding, 1 for start symbol
-        if self.MLP:
-            self.pH = self.model.add_parameters((options.hidden_units, options.his_lstmdims))
-            self.pO = self.model.add_parameters((self.nBios, options.hidden_units))
-        else:
-            self.pO = self.model.add_parameters((self.nBios, options.his_lstmdims))
+        self.pH = self.model.add_parameters((options.hidden_units, options.his_lstmdims))
+        self.pO = self.model.add_parameters((self.nBios, options.hidden_units))
 
         self.edim = 0
         self.external_embedding = None
@@ -84,21 +80,15 @@ class Tagger:
         fw = [x.output() for x in f_init.add_inputs(inputs)]
         bw = [x.output() for x in b_init.add_inputs(reversed(inputs))]
 
-        if self.MLP:
-            H = parameter(self.pH)
-            O = parameter(self.pO)
-        else:
-            O = parameter(self.pO)
+        H = parameter(self.pH)
+        O = parameter(self.pO)
         errs = []
 
         for f, b, bio, i in zip(fw, reversed(bw), bios, xrange(len(bios))):
             f_b = concatenate([f, b])
             b_i = self.LE[bios[i-1]] if i>0 else self.LE[self.nBios]
             hist_init = hist_init.add_input(concatenate([f_b, b_i]))
-            if self.MLP:
-                r_bio = O * (tanh(H * hist_init.output()))
-            else:
-                r_bio = O * hist_init.output()
+            r_bio = O * (rectify(H * hist_init.output()))
             err = pickneglogsoftmax(r_bio, bio)
             errs.append(err)
         return esum(errs)
@@ -114,11 +104,8 @@ class Tagger:
         fw = [x.output() for x in f_init.add_inputs(inputs)]
         bw = [x.output() for x in b_init.add_inputs(reversed(inputs))]
 
-        if self.MLP:
-            H = parameter(self.pH)
-            O = parameter(self.pO)
-        else:
-            O = parameter(self.pO)
+        H = parameter(self.pH)
+        O = parameter(self.pO)
         bios = []
         last = None
         for f, b in zip(fw, reversed(bw)):
@@ -126,10 +113,7 @@ class Tagger:
             b_i = self.LE[last] if last!=None else self.LE[self.nBios]
             hist_init = hist_init.add_input(concatenate([f_b, b_i]))
 
-            if self.MLP:
-                r_t = O * (tanh(H * hist_init.output()))
-            else:
-                r_t = O * hist_init.output()
+            r_t = O * (rectify(H * hist_init.output()))
             out = softmax(r_t)
             last = np.argmax(out.npvalue())
             bios.append(self.vb.i2w[last])
