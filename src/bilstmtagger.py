@@ -169,6 +169,23 @@ class Tagger:
                 sum_errs.backward()
                 self.trainer.update()
             print 'saving current iteration'
+            dev = list(self.read(options.dev_file))
+            good = bad = 0.0
+            for sent in dev:
+                tags = self.tag_sent(sent)
+                golds = [b for w, t, b in sent]
+                for go, gu in zip(golds, tags):
+                    if go == gu:
+                        good += 1
+                    else:
+                        bad += 1
+            res = good / (good + bad)
+            if res > best_dev:
+                print '\ndev accuracy (saving):', res
+                best_dev = res
+                self.save(os.path.join(options.output, options.model))
+            else:
+                print '\ndev accuracy:', res
             self.save(os.path.join(options.output, options.model + '_' + str(ITER)))
 
     def load(self, f):
