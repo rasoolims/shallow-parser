@@ -1,6 +1,5 @@
-from dynet import *
 from collections import Counter
-import random,sys,os,codecs,pickle
+import random,os,codecs,pickle
 from optparse import OptionParser
 import numpy as np
 
@@ -215,10 +214,20 @@ class Tagger:
         parser.add_option('--outfile', type='string', dest='outfile', default='')
         parser.add_option("--eval", action="store_true", dest="eval_format", default=False)
         parser.add_option("--activation", type="string", dest="activation", default="tanh")
+        parser.add_option('--mem', type='int', dest='mem', default=2048)
         return parser.parse_args()
 
 if __name__ == '__main__':
+    import _dynet as dy
     (options, args) = Tagger.parse_options()
+    dyparams = dy.DynetParams()
+    # Fetch the command line arguments (optional)
+    dyparams.from_args()
+    # Set some parameters manualy (see the command line arguments documentation)
+    dyparams.set_mem(options.mem)
+    dyparams.init()
+    from dynet import *
+
     if options.conll_train != '' and options.output != '':
         train = list(Tagger.read(options.conll_train))
         print 'load #sent:',len(train)
