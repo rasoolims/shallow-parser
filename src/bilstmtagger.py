@@ -31,6 +31,7 @@ class Tagger:
         self.pH2 = self.model.add_parameters((options.hidden2_units, options.hidden_units)) if options.hidden2_units>0 else None
         hdim = options.hidden2_units if options.hidden2_units>0 else options.hidden_units
         self.pO = self.model.add_parameters((self.nBios, hdim))
+        self.k = options.k
 
         self.edim = 0
         self.external_embedding = None
@@ -55,9 +56,8 @@ class Tagger:
             print 'Loaded external embedding. Vector dimensions:', self.edim
 
         inp_dim = options.wembedding_dims + options.pembedding_dims + self.edim
-        history_input_dim = options.lembedding_dims +  2 * options.lstm_dims
-        self.builders = [LSTMBuilder(1, inp_dim, options.lstm_dims, self.model),
-                         LSTMBuilder(1, inp_dim, options.lstm_dims, self.model)]
+        history_input_dim = options.lembedding_dims +  options.lstm_dims
+        self.input_lstms = BiRNNBuilder(self.k, inp_dim, options.lstm_dims, self.model, LSTMBuilder)
         self.history_lstm = LSTMBuilder(1, history_input_dim, options.his_lstmdims, self.model)
 
     @staticmethod
@@ -75,7 +75,6 @@ class Tagger:
 
     def build_tagging_graph(self, words, tags, bios):
         renew_cg()
-        f_init, b_init = [b.initial_state() for b in self.builders]
         hist_init = self.history_lstm.initial_state()
         wembs = [noise(self.WE[w], 0.1) for w in words]
         pembs = [noise(self.PE[t],0.001) for t in tags]
@@ -83,18 +82,16 @@ class Tagger:
                     self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[1] if self.edim > 0 else None
                 for w in words]
         inputs = [concatenate(filter(None, [wembs[i], pembs[i],evec[i]])) for i in xrange(len(words))]
-        fw = [x.output() for x in f_init.add_inputs(inputs)]
-        bw = [x.output() for x in b_init.add_inputs(reversed(inputs))]
+        input_lstm = self.input_lstms.transduce(inputs)
 
         H1 = parameter(self.pH1)
         H2 = parameter(self.pH2) if self.pH2!=None else None
         O = parameter(self.pO)
         errs = []
 
-        for f, b, bio, i in zip(fw, reversed(bw), bios, xrange(len(bios))):
-            f_b = concatenate([f, b])
+        for f, bio, i in zip(input_lstm, bios, xrange(len(bios))):
             b_i = self.LE[bios[i-1]] if i>0 else self.LE[self.nBios]
-            hist_init = hist_init.add_input(concatenate([f_b, b_i]))
+            hist_init = hist_init.add_input(concatenate([f, b_i]))
             r_bio = O * (self.activation(H2*self.activation(H1 * hist_init.output()))) if H2!=None else O * (self.activation(H1 * hist_init.output()))
             err = pickneglogsoftmax(r_bio, bio)
             errs.append(err)
@@ -102,25 +99,20 @@ class Tagger:
 
     def tag_sent(self, sent):
         renew_cg()
-        f_init, b_init = [b.initial_state() for b in self.builders]
         hist_init = self.history_lstm.initial_state()
         wembs = [self.WE[self.vw.w2i.get(w, self.UNK_W)] for w, t, bio in sent]
         pembs = [self.PE[self.vt.w2i.get(t, self.UNK_P)] for w, t, bio in sent]
         evec = [self.extrn_lookup[self.extrnd[w]] if self.edim > 0 and  w in self.extrnd else self.extrn_lookup[1] if self.edim>0 else None for w, t, bio in sent]
         inputs = [concatenate(filter(None, [wembs[i], pembs[i], evec[i]])) for i in xrange(len(sent))]
-        fw = [x.output() for x in f_init.add_inputs(inputs)]
-        bw = [x.output() for x in b_init.add_inputs(reversed(inputs))]
-
+        input_lstm = self.input_lstms.transduce(inputs)
         H1 = parameter(self.pH1)
         H2 = parameter(self.pH2) if self.pH2!=None else None
         O = parameter(self.pO)
         bios = []
         last = None
-        for f, b in zip(fw, reversed(bw)):
-            f_b = concatenate([f, b])
+        for f in input_lstm:
             b_i = self.LE[last] if last!=None else self.LE[self.nBios]
-            hist_init = hist_init.add_input(concatenate([f_b, b_i]))
-
+            hist_init = hist_init.add_input(concatenate([f, b_i]))
             r_t = O * (self.activation(H2*self.activation(H1 * hist_init.output()))) if H2!=None else O * (self.activation(H1 * hist_init.output()))
             out = softmax(r_t)
             last = np.argmax(out.npvalue())
@@ -215,6 +207,7 @@ class Tagger:
         parser.add_option("--eval", action="store_true", dest="eval_format", default=False)
         parser.add_option("--activation", type="string", dest="activation", default="tanh")
         parser.add_option('--mem', type='int', dest='mem', default=2048)
+        parser.add_option('--k', type='int', dest='k', help = 'LSTM depth', default=4)
         return parser.parse_args()
 
 if __name__ == '__main__':
