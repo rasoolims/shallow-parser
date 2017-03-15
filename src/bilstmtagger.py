@@ -221,9 +221,7 @@ if __name__ == '__main__':
     import _dynet as dy
     (options, args) = Tagger.parse_options()
     dyparams = dy.DynetParams()
-    # Fetch the command line arguments (optional)
     dyparams.from_args()
-    # Set some parameters manualy (see the command line arguments documentation)
     dyparams.set_mem(options.mem)
     dyparams.init()
     from dynet import *
