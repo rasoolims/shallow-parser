@@ -6,7 +6,7 @@ import numpy as np
 import util
 
 class Tagger:
-    def __init__(self, options, words, tags, bios):
+    def __init__(self, options, words, tags, bios, chars):
         self.options = options
         self.activations = {'tanh': tanh, 'sigmoid': logistic, 'relu': rectify,
                             'tanh3': (lambda x: tanh(cwise_multiply(cwise_multiply(x, x), x)))}
@@ -18,6 +18,7 @@ class Tagger:
         self.UNK_P = self.vt.w2i['_UNK_']
 
         self.nwords = self.vw.size()
+        self.chars = util.Vocab.from_corpus([chars])
         self.ntags = self.vt.size()
         self.nBios = self.vb.size()
 
@@ -27,6 +28,7 @@ class Tagger:
         self.WE = self.model.add_lookup_parameters((self.nwords, options.wembedding_dims))
         self.PE = self.model.add_lookup_parameters((self.ntags, options.pembedding_dims))
         self.LE = self.model.add_lookup_parameters((self.nBios+1, options.lembedding_dims)) # label embedding, 1 for start symbol
+        self.CE = self.model.add_lookup_parameters((self.chars.size(), options.cembedding_dims))
         self.pH1 = self.model.add_parameters((options.hidden_units, options.his_lstmdims))
         self.pH2 = self.model.add_parameters((options.hidden2_units, options.hidden_units)) if options.hidden2_units>0 else None
         hdim = options.hidden2_units if options.hidden2_units>0 else options.hidden_units
@@ -55,9 +57,10 @@ class Tagger:
             self.extrn_lookup.init_row(1, noextrn)
             print 'Loaded external embedding. Vector dimensions:', self.edim
 
-        inp_dim = options.wembedding_dims + options.pembedding_dims + self.edim
+        inp_dim = options.wembedding_dims + options.pembedding_dims + self.edim + options.clstm_dims
         history_input_dim = options.lembedding_dims +  options.lstm_dims
         self.input_lstms = BiRNNBuilder(self.k, inp_dim, options.lstm_dims, self.model, LSTMBuilder)
+        self.char_lstms = BiRNNBuilder(1, options.cembedding_dims, options.clstm_dims, self.model, LSTMBuilder)
         self.history_lstm = LSTMBuilder(1, history_input_dim, options.his_lstmdims, self.model)
 
     @staticmethod
@@ -73,15 +76,18 @@ class Tagger:
                 sent.append((w, p, bio))
         if sent: yield  sent
 
-    def build_tagging_graph(self, words, tags, bios):
+    def build_tagging_graph(self, sent_words, words, tags, bios):
         renew_cg()
         hist_init = self.history_lstm.initial_state()
+        char_lstms = []
+        for w in sent_words:
+            char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if random.random()>=0.001 else self.CE[self.chars.w2i[' ']] for c in list(w)]))
         wembs = [noise(self.WE[w], 0.1) for w in words]
         pembs = [noise(self.PE[t],0.001) for t in tags]
         evec = [self.extrn_lookup[
                     self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[1] if self.edim > 0 else None
                 for w in words]
-        inputs = [concatenate(filter(None, [wembs[i], pembs[i],evec[i]])) for i in xrange(len(words))]
+        inputs = [concatenate(filter(None, [wembs[i], pembs[i],evec[i],char_lstms[i][-1]])) for i in xrange(len(words))]
         input_lstm = self.input_lstms.transduce(inputs)
 
         H1 = parameter(self.pH1)
@@ -102,8 +108,11 @@ class Tagger:
         hist_init = self.history_lstm.initial_state()
         wembs = [self.WE[self.vw.w2i.get(w, self.UNK_W)] for w, t, bio in sent]
         pembs = [self.PE[self.vt.w2i.get(t, self.UNK_P)] for w, t, bio in sent]
+        char_lstms = []
+        for w,t,bio in sent:
+            char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if c in self.chars.w2i else self.CE[self.chars.w2i[' ']] for c in list(w)]))
         evec = [self.extrn_lookup[self.extrnd[w]] if self.edim > 0 and  w in self.extrnd else self.extrn_lookup[1] if self.edim>0 else None for w, t, bio in sent]
-        inputs = [concatenate(filter(None, [wembs[i], pembs[i], evec[i]])) for i in xrange(len(sent))]
+        inputs = [concatenate(filter(None, [wembs[i], pembs[i], evec[i],char_lstms[i][-1]])) for i in xrange(len(sent))]
         input_lstm = self.input_lstms.transduce(inputs)
         H1 = parameter(self.pH1)
         H2 = parameter(self.pH2) if self.pH2!=None else None
@@ -153,7 +162,7 @@ class Tagger:
                 ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in s]
                 ps = [self.vt.w2i[p] for w, p, bio in s]
                 bs = [self.vb.w2i[bio] for w, p, bio in s]
-                sum_errs = self.build_tagging_graph(ws, ps, bs)
+                sum_errs = self.build_tagging_graph([w for w,p,bios in s],ws, ps, bs)
                 squared = -sum_errs  # * sum_errs
                 loss += sum_errs.scalar_value()
                 tagged += len(ps)
@@ -195,19 +204,21 @@ class Tagger:
         parser.add_option('--extrn', dest='external_embedding', help='External embeddings', metavar='FILE')
         parser.add_option('--model', dest='model', help='Load/Save model file', metavar='FILE', default='model.model')
         parser.add_option('--wembedding', type='int', dest='wembedding_dims', default=128)
+        parser.add_option('--cembedding', type='int', dest='cembedding_dims', help='size of character embeddings', default=30)
         parser.add_option('--pembedding', type='int', dest='pembedding_dims', default=30)
         parser.add_option('--lembedding', type='int', dest='lembedding_dims', default=30)
         parser.add_option('--epochs', type='int', dest='epochs', default=5)
         parser.add_option('--hidden', type='int', dest='hidden_units', default=200)
         parser.add_option('--hidden2', type='int', dest='hidden2_units', default=0)
         parser.add_option('--lstmdims', type='int', dest='lstm_dims', default=200)
+        parser.add_option('--clstmdims', type='int', dest='clstm_dims', default=100)
         parser.add_option('--his_lstmdims', type='int', dest='his_lstmdims', default=200)
         parser.add_option('--outdir', type='string', dest='output', default='')
         parser.add_option('--outfile', type='string', dest='outfile', default='')
         parser.add_option("--eval", action="store_true", dest="eval_format", default=False)
         parser.add_option("--activation", type="string", dest="activation", default="tanh")
         parser.add_option('--mem', type='int', dest='mem', default=2048)
-        parser.add_option('--k', type='int', dest='k', help = 'LSTM depth', default=4)
+        parser.add_option('--k', type='int', dest='k', help = 'word LSTM depth', default=1)
         return parser.parse_args()
 
 if __name__ == '__main__':
@@ -225,23 +236,26 @@ if __name__ == '__main__':
         words = []
         tags = []
         bios = []
+        chars = {' '}
         wc = Counter()
         for s in train:
             for w, p, bio in s:
                 words.append(w)
                 tags.append(p)
                 bios.append(bio)
+                [chars.add(x) for x in list(w)]
                 wc[w] += 1
         words.append('_UNK_')
         tags.append('_UNK_')
         tags.append('_START_')
         bios.append('_START_')
+        ch = list(chars)
 
         print 'writing params file'
         with open(os.path.join(options.output, options.params), 'w') as paramsfp:
-            pickle.dump((words, tags, bios, options), paramsfp)
+            pickle.dump((words, tags, bios, ch, options), paramsfp)
 
-        Tagger(options, words, tags, bios).train()
+        Tagger(options, words, tags, bios, ch).train()
 
         options.model = os.path.join(options.output,options.model+'_'+str(options.epochs-1))
         options.params =  os.path.join(options.output,options.params)
@@ -250,8 +264,8 @@ if __name__ == '__main__':
         print options.model, options.params, options.eval_format
         print 'reading params'
         with open(options.params, 'r') as paramsfp:
-            words, tags, bios, opt = pickle.load(paramsfp)
-        tagger = Tagger(opt, words, tags, bios)
+            words, tags, bios, ch, opt = pickle.load(paramsfp)
+        tagger = Tagger(opt, words, tags, bios, ch)
 
         print 'loading model'
         print options.model
