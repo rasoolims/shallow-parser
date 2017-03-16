@@ -81,7 +81,7 @@ class Tagger:
         hist_init = self.history_lstm.initial_state()
         char_lstms = []
         for w in sent_words:
-            char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if random.random()>=0.001 else self.CE[self.chars.w2i[' ']] for c in list(w)]))
+            char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if random.random()>=0.001 else self.CE[self.chars.w2i[' ']] for c in ['<s>']+list(w)+['</s>']]))
         wembs = [noise(self.WE[w], 0.1) for w in words]
         pembs = [noise(self.PE[t],0.001) for t in tags]
         evec = [self.extrn_lookup[
@@ -110,7 +110,7 @@ class Tagger:
         pembs = [self.PE[self.vt.w2i.get(t, self.UNK_P)] for w, t, bio in sent]
         char_lstms = []
         for w,t,bio in sent:
-            char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if c in self.chars.w2i else self.CE[self.chars.w2i[' ']] for c in list(w)]))
+            char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if c in self.chars.w2i else self.CE[self.chars.w2i[' ']] for c in ['<s>']+list(w)+['</s>']]))
         evec = [self.extrn_lookup[self.extrnd[w]] if self.edim > 0 and  w in self.extrnd else self.extrn_lookup[1] if self.edim>0 else None for w, t, bio in sent]
         inputs = [concatenate(filter(None, [wembs[i], pembs[i], evec[i],char_lstms[i][-1]])) for i in xrange(len(sent))]
         input_lstm = self.input_lstms.transduce(inputs)
@@ -236,7 +236,7 @@ if __name__ == '__main__':
         words = []
         tags = []
         bios = []
-        chars = {' '}
+        chars = {' ','<s>','</s>'}
         wc = Counter()
         for s in train:
             for w, p, bio in s:
