@@ -8,8 +8,7 @@ import util
 class Tagger:
     def __init__(self, options, words, tags, bios, chars):
         self.options = options
-        self.activations = {'tanh': tanh, 'sigmoid': logistic, 'relu': rectify,
-                            'tanh3': (lambda x: tanh(cwise_multiply(cwise_multiply(x, x), x)))}
+        self.activations = {'tanh': tanh, 'sigmoid': logistic, 'relu': rectify}
         self.activation = self.activations[options.activation]
         self.vw = util.Vocab.from_corpus([words])
         self.vt = util.Vocab.from_corpus([tags])
@@ -34,6 +33,8 @@ class Tagger:
         hdim = options.hidden2_units if options.hidden2_units>0 else options.hidden_units
         self.pO = self.model.add_parameters((self.nBios, hdim))
         self.k = options.k
+        self.drop = options.drop
+        self.dropout = options.dropout
 
         self.edim = 0
         self.external_embedding = None
@@ -78,6 +79,8 @@ class Tagger:
 
     def build_tagging_graph(self, sent_words, words, tags, bios):
         renew_cg()
+        if self.drop:
+            self.history_lstm.set_dropout(self.dropout)
         hist_init = self.history_lstm.initial_state()
         char_lstms = []
         for w in sent_words:
@@ -88,6 +91,9 @@ class Tagger:
                     self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[1] if self.edim > 0 else None
                 for w in words]
         inputs = [concatenate(filter(None, [wembs[i], pembs[i],evec[i],char_lstms[i][-1]])) for i in xrange(len(words))]
+        if self.drop:
+            [dropout(inputs[i],self.dropout) for i in xrange(len(inputs))]
+            self.input_lstms.set_dropout(self.dropout)
         input_lstm = self.input_lstms.transduce(inputs)
 
         H1 = parameter(self.pH1)
@@ -98,13 +104,18 @@ class Tagger:
         for f, bio, i in zip(input_lstm, bios, xrange(len(bios))):
             b_i = self.LE[bios[i-1]] if i>0 else self.LE[self.nBios]
             hist_init = hist_init.add_input(concatenate([f, b_i]))
-            r_bio = O * (self.activation(H2*self.activation(H1 * hist_init.output()))) if H2!=None else O * (self.activation(H1 * hist_init.output()))
+            if not self.drop:
+                r_bio = O * (self.activation(H2*self.activation(H1 * hist_init.output()))) if H2!=None else O * (self.activation(H1 * hist_init.output()))
+            else:
+                r_bio = O * (self.activation(dropout(H2,self.dropout) * self.activation(dropout(H1,self.dropout) * hist_init.output()))) if H2 != None else O * (self.activation(dropout(H1,self.dropout) * hist_init.output()))
             err = pickneglogsoftmax(r_bio, bio)
             errs.append(err)
         return esum(errs)
 
     def tag_sent(self, sent):
         renew_cg()
+        self.input_lstms.disable_dropout()
+        self.history_lstm.disable_dropout()
         hist_init = self.history_lstm.initial_state()
         wembs = [self.WE[self.vw.w2i.get(w, self.UNK_W)] for w, t, bio in sent]
         pembs = [self.PE[self.vt.w2i.get(t, self.UNK_P)] for w, t, bio in sent]
@@ -217,6 +228,8 @@ class Tagger:
         parser.add_option('--outfile', type='string', dest='outfile', default='')
         parser.add_option("--eval", action="store_true", dest="eval_format", default=False)
         parser.add_option("--activation", type="string", dest="activation", default="tanh")
+        parser.add_option("--drop", action="store_true", dest="drop", default=False, help='Use dropout.')
+        parser.add_option("--dropout", type="float", dest="dropout", default=0.33, help='Dropout probability.')
         parser.add_option('--mem', type='int', dest='mem', default=2048)
         parser.add_option('--k', type='int', dest='k', help = 'word LSTM depth', default=1)
         return parser.parse_args()
