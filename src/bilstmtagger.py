@@ -153,7 +153,7 @@ class Tagger:
                     tagged = 0
 
                     good = bad = 0.0
-                    if options.dev_file:
+                    if options.save_best and options.dev_file:
                         dev = list(self.read(options.dev_file))
                         for sent in dev:
                             tags = self.tag_sent(sent)
@@ -181,23 +181,25 @@ class Tagger:
                 self.trainer.update()
             dev = list(self.read(options.dev_file))
             good = bad = 0.0
-            for sent in dev:
-                tags = self.tag_sent(sent)
-                golds = [b for w, t, b in sent]
-                for go, gu in zip(golds, tags):
-                    if go == gu:
-                        good += 1
-                    else:
-                        bad += 1
-            res = good / (good + bad)
-            if res > best_dev:
-                print '\ndev accuracy (saving):', res
-                best_dev = res
-                self.save(os.path.join(options.output, options.model+".best"))
-            else:
-                print '\ndev accuracy:', res
-        print 'Saving the final model'
-        self.save(os.path.join(options.output, options.model))
+            if options.save_best and options.dev_file:
+                for sent in dev:
+                    tags = self.tag_sent(sent)
+                    golds = [b for w, t, b in sent]
+                    for go, gu in zip(golds, tags):
+                        if go == gu:
+                            good += 1
+                        else:
+                            bad += 1
+                res = good / (good + bad)
+                if res > best_dev:
+                    print '\ndev accuracy (saving):', res
+                    best_dev = res
+                    self.save(os.path.join(options.output, options.model+".best"))
+                else:
+                    print '\ndev accuracy:', res
+        if not options.save_best or not options.dev_file:
+            print 'Saving the final model'
+            self.save(os.path.join(options.output, options.model))
 
     def load(self, f):
         self.model.load(f)
@@ -209,7 +211,7 @@ class Tagger:
     def parse_options():
         parser = OptionParser()
         parser.add_option('--train', dest='conll_train', help='Annotated CONLL train file', metavar='FILE', default='')
-        parser.add_option('--dev', dest='dev_file', help='Annotated CONLL development file', metavar='FILE', default='')
+        parser.add_option('--dev', dest='dev_file', help='Annotated CONLL development file', metavar='FILE', default=None)
         parser.add_option('--test', dest='conll_test', help='Annotated CONLL test file', metavar='FILE', default='')
         parser.add_option('--params', dest='params', help='Parameters file', metavar='FILE', default='params.pickle')
         parser.add_option('--extrn', dest='external_embedding', help='External embeddings', metavar='FILE')
@@ -229,6 +231,7 @@ class Tagger:
         parser.add_option("--eval", action="store_true", dest="eval_format", default=False)
         parser.add_option("--activation", type="string", dest="activation", default="tanh")
         parser.add_option("--drop", action="store_true", dest="drop", default=False, help='Use dropout.')
+        parser.add_option("--save_best", action="store_true", dest="save_best", default=False, help='Store the best model.')
         parser.add_option("--dropout", type="float", dest="dropout", default=0.33, help='Dropout probability.')
         parser.add_option('--mem', type='int', dest='mem', default=2048)
         parser.add_option('--k', type='int', dest='k', help = 'word LSTM depth', default=1)
@@ -244,6 +247,7 @@ if __name__ == '__main__':
     from dynet import *
 
     if options.conll_train != '' and options.output != '':
+        if not os.path.isdir(options.output): os.mkdir(options.output)
         train = list(Tagger.read(options.conll_train))
         print 'load #sent:',len(train)
         words = []
