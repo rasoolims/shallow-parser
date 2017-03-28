@@ -179,7 +179,6 @@ class Tagger:
                 tagged += len(ps)
                 sum_errs.backward()
                 self.trainer.update()
-            print 'saving current iteration'
             dev = list(self.read(options.dev_file))
             good = bad = 0.0
             for sent in dev:
@@ -194,10 +193,11 @@ class Tagger:
             if res > best_dev:
                 print '\ndev accuracy (saving):', res
                 best_dev = res
-                self.save(os.path.join(options.output, options.model))
+                self.save(os.path.join(options.output, options.model+".best"))
             else:
                 print '\ndev accuracy:', res
-            self.save(os.path.join(options.output, options.model + '_' + str(ITER)))
+        print 'Saving the final model'
+        self.save(os.path.join(options.output, options.model))
 
     def load(self, f):
         self.model.load(f)
@@ -270,8 +270,8 @@ if __name__ == '__main__':
 
         Tagger(options, words, tags, bios, ch).train()
 
-        options.model = os.path.join(options.output,options.model+'_'+str(options.epochs-1))
-        options.params =  os.path.join(options.output,options.params)
+        options.model = os.path.join(options.output,options.model)
+        options.params = os.path.join(options.output,options.params)
 
     if options.conll_test != '' and options.params != '' and options.model != '' and options.outfile != '':
         print options.model, options.params, options.eval_format
