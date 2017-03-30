@@ -77,6 +77,17 @@ class Tagger:
                 sent.append((w, p, bio))
         if sent: yield  sent
 
+    @staticmethod
+    def read_tagged_file(fname):
+        for line in file(fname):
+            spl = line.strip().split()
+            sent = []
+            for s in spl:
+                w = s[:s.rfind('_')]
+                p = s[s.rfind('_')+1:]
+                sent.append((w,p,'_'))
+            yield sent
+
     def build_tagging_graph(self, sent_words, words, tags, bios):
         renew_cg()
         if self.drop:
@@ -194,7 +205,7 @@ class Tagger:
                 if res > best_dev:
                     print '\ndev accuracy (saving):', res
                     best_dev = res
-                    self.save(os.path.join(options.output, options.model+".best"))
+                    self.save(os.path.join(options.output, options.model))
                 else:
                     print '\ndev accuracy:', res
         if not options.save_best or not options.dev_file:
@@ -213,6 +224,8 @@ class Tagger:
         parser.add_option('--train', dest='conll_train', help='Annotated CONLL train file', metavar='FILE', default='')
         parser.add_option('--dev', dest='dev_file', help='Annotated CONLL development file', metavar='FILE', default=None)
         parser.add_option('--test', dest='conll_test', help='Annotated CONLL test file', metavar='FILE', default='')
+        parser.add_option('--inputs', dest='inputs', help='Input tagged files separated by ,', metavar='FILE', default=None)
+        parser.add_option('--ext', dest='ext', help='File extension for outputfiles', type='str',default='.chunk')
         parser.add_option('--params', dest='params', help='Parameters file', metavar='FILE', default='params.pickle')
         parser.add_option('--extrn', dest='external_embedding', help='External embeddings', metavar='FILE')
         parser.add_option('--model', dest='model', help='Load/Save model file', metavar='FILE', default='model.model')
@@ -300,4 +313,31 @@ if __name__ == '__main__':
                 [output.append(' '.join([sent[i][0],sent[i][1],tags[i]])) for i in xrange(len(tags))]
             writer.write('\n'.join(output))
             writer.write('\n\n')
+        print 'done!'
+
+    if options.inputs != None and options.params != '' and options.model != '':
+        print options.model, options.params, options.eval_format
+        print 'reading params'
+        with open(options.params, 'r') as paramsfp:
+            words, tags, bios, ch, opt = pickle.load(paramsfp)
+        tagger = Tagger(opt, words, tags, bios, ch)
+        print 'loading model'
+        print options.model
+        tagger.load(options.model)
+
+        inputs = options.inputs.strip().split(',')
+        for input in inputs:
+            print input
+            test = list(Tagger.read_tagged_file(input))
+            print 'loaded',len(test),'sentences!'
+            writer = codecs.open(input+options.ext, 'w')
+            for sent in test:
+                output = list()
+                tags = tagger.tag_sent(sent)
+                if options.eval_format:
+                     [output.append(' '.join([sent[i][0], sent[i][1],sent[i][2], tags[i]])) for i in xrange(len(tags))]
+                else:
+                    [output.append(' '.join([sent[i][0],sent[i][1],tags[i]])) for i in xrange(len(tags))]
+                writer.write('\n'.join(output))
+                writer.write('\n\n')
         print 'done!'
