@@ -38,6 +38,16 @@ class Tagger:
         self.transitions = self.model.add_lookup_parameters((self.nBios, self.nBios))
         self.edim = 0
         self.external_embedding = None
+        if options.initial_embeddings is not None:
+            initial_embeddings_fp = open(options.initial_embeddings, 'r')
+            initial_embeddings_fp.readline()
+            initial_embeddings_vec = {line.split(' ')[0]: [float(f) for f in line.strip().split(' ')[1:]] for line in
+                                       initial_embeddings_fp}
+            assert self.edim == initial_embeddings_vec[0]
+            initial_embeddings_fp.close()
+            for word in self.vw.w2i.keys():
+               if word in initial_embeddings_vec:
+                    self.WE.init_row(self.vw.w2i.get(word), initial_embeddings_vec[word])
         if options.external_embedding is not None:
             external_embedding_fp = open(options.external_embedding, 'r')
             external_embedding_fp.readline()
@@ -51,8 +61,6 @@ class Tagger:
             self.extrn_lookup.set_updated(False)
             for word, i in self.extrnd.iteritems():
                 self.extrn_lookup.init_row(i, self.external_embedding[word])
-                #if self.edim == options.wembedding_dims and self.vw.w2i.has_key(word):
-                    #self.WE.init_row(self.vw.w2i.get(word), self.external_embedding[word])
             self.extrnd['_UNK_'] = 1
             self.extrnd['_START_'] = 2
             self.extrn_lookup.init_row(1, noextrn)
@@ -280,6 +288,7 @@ class Tagger:
         parser.add_option('--ext', dest='ext', help='File extension for outputfiles', type='str',default='.chunk')
         parser.add_option('--params', dest='params', help='Parameters file', metavar='FILE', default='params.pickle')
         parser.add_option('--extrn', dest='external_embedding', help='External embeddings', metavar='FILE')
+        parser.add_option('--init', dest='initial_embeddings', help='Initial embeddings', metavar='FILE')
         parser.add_option('--model', dest='model', help='Load/Save model file', metavar='FILE', default='model.model')
         parser.add_option('--wembedding', type='int', dest='wembedding_dims', default=128)
         parser.add_option('--cembedding', type='int', dest='cembedding_dims', help='size of character embeddings', default=30)
