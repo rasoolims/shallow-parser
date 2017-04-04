@@ -43,7 +43,7 @@ class Tagger:
             initial_embeddings_fp.readline()
             initial_embeddings_vec = {line.split(' ')[0]: [float(f) for f in line.strip().split(' ')[1:]] for line in
                                        initial_embeddings_fp}
-            assert self.edim == initial_embeddings_vec[0]
+            assert options.wembedding_dims == len(initial_embeddings_vec[0])
             initial_embeddings_fp.close()
             for word in self.vw.w2i.keys():
                if word in initial_embeddings_vec:
