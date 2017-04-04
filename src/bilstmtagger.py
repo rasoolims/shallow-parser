@@ -107,7 +107,6 @@ class Tagger:
         inputs = [concatenate(filter(None, [wembs[i], pembs[i],evec[i],char_lstms[i][-1]])) for i in xrange(len(words))]
         if self.drop:
             [dropout(inputs[i],self.dropout) for i in xrange(len(inputs))]
-            self.input_lstms.set_dropout(self.dropout)
         input_lstm = self.input_lstms.transduce(inputs)
 
         H1 = parameter(self.pH1)
