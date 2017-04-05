@@ -17,7 +17,7 @@ class Tagger:
         self.batch = options.batch
         self.nwords = self.vw.size()
         self.chars = util.Vocab.from_corpus([chars])
-        self.ntags = len(tags)
+        self.ntags = self.vt.size()
         self.nBios = self.vb.size()
         print 'num of pos tags',self.ntags, 'num of bio tags',self.nBios
         self.chunk_model = Model()
@@ -265,12 +265,12 @@ class Tagger:
 
                 if len(batch)>=self.batch:
                     start = time.time()
-                    # for j in xrange(len(batch)):
-                    #     ws,ps,_ = batch[j]
-                    #     sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  ps, False)
-                    # sum_errs.backward()
-                    # self.chunk_trainer.update()
-                    # renew_cg()
+                    for j in xrange(len(batch)):
+                        ws,ps,_ = batch[j]
+                        sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  ps, False)
+                    sum_errs.backward()
+                    self.chunk_trainer.update()
+                    renew_cg()
                     print i,'1',time.time() - start
                     start = time.time()
                     for j in xrange(len(batch)):
