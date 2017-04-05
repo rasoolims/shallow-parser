@@ -227,7 +227,7 @@ class Tagger:
         return [self.vb.i2w[b] for b in bios]
 
     def train(self):
-        tagged = loss = 0
+        tagged, loss = 0,0
         best_dev = float('-inf')
         for ITER in xrange(self.options.epochs):
             print 'ITER', ITER
@@ -271,7 +271,7 @@ class Tagger:
                     sum_errs.backward()
                     self.chunk_trainer.update()
                     renew_cg()
-
+                    loss = 0
                     for i in xrange(len(batch)):
                         ws,ps,bs = batch[i]
                         sum_errs = self.neg_log_loss([w for w,p,bios in s], ws,  bs)
