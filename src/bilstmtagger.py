@@ -28,9 +28,9 @@ class Tagger:
         self.PE = self.model.add_lookup_parameters((self.ntags, options.pembedding_dims))
         self.LE = self.model.add_lookup_parameters((self.nBios+1, options.lembedding_dims)) # label embedding, 1 for start symbol
         self.CE = self.model.add_lookup_parameters((self.chars.size(), options.cembedding_dims))
-        self.pH1 = self.model.add_parameters((options.hidden_units, options.lstm_dims))
+        self.pH1 = self.model.add_parameters((options.hidden_units, options.lstm_dims)) if options.hidden_units>0 else None
         self.pH2 = self.model.add_parameters((options.hidden2_units, options.hidden_units)) if options.hidden2_units>0 else None
-        hdim = options.hidden2_units if options.hidden2_units>0 else options.hidden_units
+        hdim = options.hidden2_units if options.hidden2_units>0 else options.hidden_units if options.hidden_units>0 else options.lstm_dims
         self.pO = self.model.add_parameters((self.nBios, hdim))
         self.k = options.k
         self.drop = options.drop
@@ -109,13 +109,13 @@ class Tagger:
             [dropout(inputs[i],self.dropout) for i in xrange(len(inputs))]
         input_lstm = self.input_lstms.transduce(inputs)
 
-        H1 = parameter(self.pH1)
+        H1 = parameter(self.pH1) if self.pH1!=None else None
         H2 = parameter(self.pH2) if self.pH2!=None else None
         O = parameter(self.pO)
         scores = []
 
         for f in input_lstm:
-            score_t = O*(self.activation(H2*self.activation(H1 * f))) if H2!=None else O * (self.activation(H1 * f))
+            score_t = O*(self.activation(H2*self.activation(H1 * f))) if H2!=None else O * (self.activation(H1 * f)) if self.pH1!=None  else O*f
             scores.append(score_t)
         return scores
 
