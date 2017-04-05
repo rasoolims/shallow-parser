@@ -20,18 +20,17 @@ class Tagger:
         self.chars = util.Vocab.from_corpus([chars])
         self.ntags = self.vt.size()
         self.nBios = self.vb.size()
-        self.use_pos = options.use_pos
+
         self.model = Model()
-        self.trainer = SimpleSGDTrainer(self.model, 0.01)
-        self.trainer.set_clip_threshold(5.0)
+        self.trainer = AdamTrainer(self.model)
 
         self.WE = self.model.add_lookup_parameters((self.nwords, options.wembedding_dims))
-        self.PE = self.model.add_lookup_parameters((self.ntags, options.pembedding_dims)) if self.use_pos else None
+        self.PE = self.model.add_lookup_parameters((self.ntags, options.pembedding_dims))
+        self.LE = self.model.add_lookup_parameters((self.nBios+1, options.lembedding_dims)) # label embedding, 1 for start symbol
         self.CE = self.model.add_lookup_parameters((self.chars.size(), options.cembedding_dims))
-        self.pH1 = self.model.add_parameters((options.hidden_units, options.lstm_dims)) if options.hidden_units>0 else None
+        self.pH1 = self.model.add_parameters((options.hidden_units, options.lstm_dims))
         self.pH2 = self.model.add_parameters((options.hidden2_units, options.hidden_units)) if options.hidden2_units>0 else None
-        hdim = options.hidden2_units if options.hidden2_units>0 else options.hidden_units if  options.hidden_units>0 else options.lstm_dims
-        self.use_mlp = True if options.hidden_units>0  else False
+        hdim = options.hidden2_units if options.hidden2_units>0 else options.hidden_units
         self.pO = self.model.add_parameters((self.nBios, hdim))
         self.k = options.k
         self.drop = options.drop
@@ -67,8 +66,7 @@ class Tagger:
             self.extrn_lookup.init_row(1, noextrn)
             print 'Loaded external embedding. Vector dimensions:', self.edim
 
-        self.pos_dim = options.pembedding_dims if self.use_pos else 0
-        inp_dim = options.wembedding_dims + self.pos_dim + self.edim + options.clstm_dims
+        inp_dim = options.wembedding_dims + options.pembedding_dims + self.edim + options.clstm_dims
         self.input_lstms = BiRNNBuilder(self.k, inp_dim, options.lstm_dims, self.model, LSTMBuilder)
         self.char_lstms = BiRNNBuilder(1, options.cembedding_dims, options.clstm_dims, self.model, LSTMBuilder)
 
@@ -102,7 +100,7 @@ class Tagger:
         for w in sent_words:
             char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if  (c in self.chars.w2i and not is_train) or (is_train and random.random()>=0.001) else self.CE[self.chars.w2i[' ']] for c in ['<s>']+list(w)+['</s>']]))
         wembs = [noise(self.WE[w], 0.1) if is_train else self.WE[w] for w in words]
-        pembs = [noise(self.PE[t],0.001) if is_train else self.PE[t] for t in tags] if self.use_pos else [None for _ in tags]
+        pembs = [noise(self.PE[t],0.001) if is_train else self.PE[t] for t in tags]
         evec = [self.extrn_lookup[
                     self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[1] if self.edim > 0 else None
                 for w in words]
@@ -111,13 +109,13 @@ class Tagger:
             [dropout(inputs[i],self.dropout) for i in xrange(len(inputs))]
         input_lstm = self.input_lstms.transduce(inputs)
 
-        H1 = parameter(self.pH1) if self.pH1!=None else None
+        H1 = parameter(self.pH1)
         H2 = parameter(self.pH2) if self.pH2!=None else None
         O = parameter(self.pO)
         scores = []
 
         for f in input_lstm:
-            score_t =  O*(self.activation(H2*self.activation(H1 * f))) if H2!=None else O * (self.activation(H1 * f)) if H1!=None else O*f
+            score_t = O*(self.activation(H2*self.activation(H1 * f))) if H2!=None else O * (self.activation(H1 * f))
             scores.append(score_t)
         return scores
 
@@ -291,22 +289,22 @@ class Tagger:
         parser.add_option('--extrn', dest='external_embedding', help='External embeddings', metavar='FILE')
         parser.add_option('--init', dest='initial_embeddings', help='Initial embeddings', metavar='FILE')
         parser.add_option('--model', dest='model', help='Load/Save model file', metavar='FILE', default='model.model')
-        parser.add_option('--wembedding', type='int', dest='wembedding_dims', default=100)
-        parser.add_option('--cembedding', type='int', dest='cembedding_dims', help='size of character embeddings', default=25)
+        parser.add_option('--wembedding', type='int', dest='wembedding_dims', default=128)
+        parser.add_option('--cembedding', type='int', dest='cembedding_dims', help='size of character embeddings', default=30)
         parser.add_option('--pembedding', type='int', dest='pembedding_dims', default=30)
+        parser.add_option('--lembedding', type='int', dest='lembedding_dims', default=30)
         parser.add_option('--epochs', type='int', dest='epochs', default=5)
-        parser.add_option('--hidden', type='int', dest='hidden_units', default=0)
+        parser.add_option('--hidden', type='int', dest='hidden_units', default=200)
         parser.add_option('--hidden2', type='int', dest='hidden2_units', default=0)
         parser.add_option('--lstmdims', type='int', dest='lstm_dims', default=200)
-        parser.add_option('--clstmdims', type='int', dest='clstm_dims', default=50)
+        parser.add_option('--clstmdims', type='int', dest='clstm_dims', default=100)
         parser.add_option('--outdir', type='string', dest='output', default='')
         parser.add_option('--outfile', type='string', dest='outfile', default='')
         parser.add_option("--eval", action="store_true", dest="eval_format", default=False)
         parser.add_option("--activation", type="string", dest="activation", default="tanh")
         parser.add_option("--drop", action="store_true", dest="drop", default=False, help='Use dropout.')
-        parser.add_option("--use_pos", action="store_true", dest="use_pos", default=False)
         parser.add_option("--save_best", action="store_true", dest="save_best", default=False, help='Store the best model.')
-        parser.add_option("--dropout", type="float", dest="dropout", default=0.5, help='Dropout probability.')
+        parser.add_option("--dropout", type="float", dest="dropout", default=0.33, help='Dropout probability.')
         parser.add_option('--mem', type='int', dest='mem', default=2048)
         parser.add_option('--k', type='int', dest='k', help = 'word LSTM depth', default=1)
         return parser.parse_args()
