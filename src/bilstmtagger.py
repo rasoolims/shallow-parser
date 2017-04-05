@@ -24,7 +24,6 @@ class Tagger:
         self.chunk_trainer = AdamTrainer(self.chunk_model)
 
         self.WE = self.chunk_model.add_lookup_parameters((self.nwords, options.wembedding_dims))
-        self.LE = self.chunk_model.add_lookup_parameters((self.nBios + 1, options.lembedding_dims)) # label embedding, 1 for start symbol
         self.CE = self.chunk_model.add_lookup_parameters((self.chars.size(), options.cembedding_dims))
         self.pH1 = self.chunk_model.add_parameters((options.hidden_units, options.lstm_dims)) if options.hidden_units > 0 else None
         self.pH2 = self.chunk_model.add_parameters((options.hidden2_units, options.hidden_units)) if options.hidden2_units > 0 else None
@@ -337,7 +336,6 @@ class Tagger:
         parser.add_option('--wembedding', type='int', dest='wembedding_dims', default=128)
         parser.add_option('--cembedding', type='int', dest='cembedding_dims', help='size of character embeddings', default=30)
         parser.add_option('--pembedding', type='int', dest='pembedding_dims', default=30)
-        parser.add_option('--lembedding', type='int', dest='lembedding_dims', default=30)
         parser.add_option('--epochs', type='int', dest='epochs', default=5)
         parser.add_option('--hidden', type='int', dest='hidden_units', default=200)
         parser.add_option('--hidden2', type='int', dest='hidden2_units', default=0)
