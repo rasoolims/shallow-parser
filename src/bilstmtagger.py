@@ -96,7 +96,6 @@ class Tagger:
             yield sent
 
     def build_tagging_graph(self, sent_words, words, tags, is_train):
-        renew_cg()
         char_lstms = []
         for w in sent_words:
             char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if  (c in self.chars.w2i and not is_train) or (is_train and random.random()>=0.001) else self.CE[self.chars.w2i[' ']] for c in ['<s>']+list(w)+['</s>']]))
