@@ -63,12 +63,10 @@ class Tagger:
             self.extrn_lookup.init_row(1, noextrn)
             print 'Loaded external embedding. Vector dimensions:', self.edim
 
-        tag_inp_dim = options.wembedding_dims + self.edim + options.clstm_dims
-        inp_dim = tag_inp_dim + self.ntags
-        self.input_lstms = BiRNNBuilder(self.k, inp_dim, options.lstm_dims, self.chunk_model, LSTMBuilder)
-        self.char_lstms = BiRNNBuilder(1, options.cembedding_dims, options.clstm_dims, self.chunk_model, LSTMBuilder)
-        self.tag_lstm = BiRNNBuilder(self.k, tag_inp_dim, options.tag_lstm_dims, self.chunk_model, LSTMBuilder)
-        self.tagO = self.chunk_model.add_parameters((self.ntags, options.tag_lstm_dims))
+        inp_dim = options.wembedding_dims + self.edim + options.clstm_dims
+        self.input_lstms = BiRNNBuilder(self.k, inp_dim, options.lstm_dims, self.chunk_model, LSTMBuilder if not options.gru else GRUBuilder)
+        self.char_lstms = BiRNNBuilder(1, options.cembedding_dims, options.clstm_dims, self.chunk_model, LSTMBuilder if not options.gru else GRUBuilder)
+        self.tagO = self.chunk_model.add_parameters((self.ntags, options.lstm_dims))
 
     @staticmethod
     def read(fname):
@@ -102,7 +100,7 @@ class Tagger:
         inputs = [concatenate(filter(None, [wembs[i], evec[i],char_lstms[i][-1]])) for i in xrange(len(words))]
         if self.drop:
             [dropout(inputs[i],self.dropout) for i in xrange(len(inputs))]
-        input_lstm = self.tag_lstm.transduce(inputs)
+        input_lstm = self.input_lstms.transduce(inputs)
 
         O = parameter(self.tagO)
         probs = []
@@ -123,22 +121,12 @@ class Tagger:
         char_lstms = []
         for w in sent_words:
             char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if (c in self.chars.w2i and not is_train) or (is_train and random.random() >= 0.001) else self.CE[self.chars.w2i[' ']] for c in  ['<s>'] + list(w) + ['</s>']]))
-
         wembs = [noise(self.WE[w], 0.1) if is_train else self.WE[w] for w in words]
         evec = [self.extrn_lookup[self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[1] if self.edim > 0 else None for w in words]
-        tag_inputs = [concatenate(filter(None, [wembs[i], evec[i], char_lstms[i][-1]])) for i in xrange(len(words))]
+        inputs = [concatenate(filter(None, [wembs[i], evec[i], char_lstms[i][-1]])) for i in xrange(len(words))]
         if self.drop and is_train:
-            [dropout(tag_inputs[i],self.dropout) for i in xrange(len(tag_inputs))]
-        tag_lstm = self.tag_lstm.transduce(tag_inputs)
-        tO = parameter(self.tagO)
-        probs = []
-        for f in tag_lstm:
-            score_t = softmax(tO * f)
-            probs.append(score_t)
-
-        inputs = [concatenate([tag_inputs[i],probs[i]]) for i in xrange(len(words))]
+            [dropout(inputs[i],self.dropout) for i in xrange(len(inputs))]
         input_lstm = self.input_lstms.transduce(inputs)
-
         H1 = parameter(self.pH1) if self.pH1!=None else None
         H2 = parameter(self.pH2) if self.pH2!=None else None
         O = parameter(self.pO)
@@ -340,13 +328,13 @@ class Tagger:
         parser.add_option('--hidden', type='int', dest='hidden_units', default=200)
         parser.add_option('--hidden2', type='int', dest='hidden2_units', default=0)
         parser.add_option('--lstmdims', type='int', dest='lstm_dims', default=200)
-        parser.add_option('--tag_lstmdims', type='int', dest='tag_lstm_dims', default=200)
         parser.add_option('--clstmdims', type='int', dest='clstm_dims', default=100)
         parser.add_option('--outdir', type='string', dest='output', default='')
         parser.add_option('--outfile', type='string', dest='outfile', default='')
         parser.add_option("--eval", action="store_true", dest="eval_format", default=False)
         parser.add_option("--activation", type="string", dest="activation", default="tanh")
         parser.add_option("--drop", action="store_true", dest="drop", default=False, help='Use dropout.')
+        parser.add_option("--gru", action="store_true", dest="gru", default=False, help='Use GRU instead of LSTM.')
         parser.add_option("--save_best", action="store_true", dest="save_best", default=False, help='Store the best model.')
         parser.add_option("--dropout", type="float", dest="dropout", default=0.33, help='Dropout probability.')
         parser.add_option('--mem', type='int', dest='mem', default=2048)
