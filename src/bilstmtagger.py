@@ -11,21 +11,18 @@ class Tagger:
         self.activations = {'tanh': tanh, 'sigmoid': logistic, 'relu': rectify}
         self.activation = self.activations[options.activation]
         self.vw = util.Vocab.from_corpus([words])
-        self.vt = util.Vocab.from_corpus([tags])
         self.vb = util.Vocab.from_corpus([bios])
         self.UNK_W = self.vw.w2i['_UNK_']
-        self.UNK_P = self.vt.w2i['_UNK_']
 
         self.nwords = self.vw.size()
         self.chars = util.Vocab.from_corpus([chars])
-        self.ntags = self.vt.size()
+        self.ntags = len(tags)
         self.nBios = self.vb.size()
 
         self.model = Model()
         self.trainer = AdamTrainer(self.model)
 
         self.WE = self.model.add_lookup_parameters((self.nwords, options.wembedding_dims))
-        self.PE = self.model.add_lookup_parameters((self.ntags, options.pembedding_dims))
         self.LE = self.model.add_lookup_parameters((self.nBios+1, options.lembedding_dims)) # label embedding, 1 for start symbol
         self.CE = self.model.add_lookup_parameters((self.chars.size(), options.cembedding_dims))
         self.pH1 = self.model.add_parameters((options.hidden_units, options.lstm_dims)) if options.hidden_units>0 else None
@@ -66,7 +63,7 @@ class Tagger:
             self.extrn_lookup.init_row(1, noextrn)
             print 'Loaded external embedding. Vector dimensions:', self.edim
 
-        inp_dim = options.wembedding_dims + options.pembedding_dims + self.edim + options.clstm_dims
+        inp_dim = options.wembedding_dims + self.edim + options.clstm_dims
         self.input_lstms = BiRNNBuilder(self.k, inp_dim, options.lstm_dims, self.model, LSTMBuilder)
         self.char_lstms = BiRNNBuilder(1, options.cembedding_dims, options.clstm_dims, self.model, LSTMBuilder)
 
@@ -94,17 +91,16 @@ class Tagger:
                 sent.append((w,p,'_'))
             yield sent
 
-    def build_tagging_graph(self, sent_words, words, tags, is_train):
+    def build_tagging_graph(self, sent_words, words, is_train):
         renew_cg()
         char_lstms = []
         for w in sent_words:
             char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if  (c in self.chars.w2i and not is_train) or (is_train and random.random()>=0.001) else self.CE[self.chars.w2i[' ']] for c in ['<s>']+list(w)+['</s>']]))
         wembs = [noise(self.WE[w], 0.1) if is_train else self.WE[w] for w in words]
-        pembs = [noise(self.PE[t],0.001) if is_train else self.PE[t] for t in tags]
         evec = [self.extrn_lookup[
                     self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[1] if self.edim > 0 else None
                 for w in words]
-        inputs = [concatenate(filter(None, [wembs[i], pembs[i],evec[i],char_lstms[i][-1]])) for i in xrange(len(words))]
+        inputs = [concatenate(filter(None, [wembs[i], evec[i],char_lstms[i][-1]])) for i in xrange(len(words))]
         if self.drop:
             [dropout(inputs[i],self.dropout) for i in xrange(len(inputs))]
         input_lstm = self.input_lstms.transduce(inputs)
@@ -152,8 +148,8 @@ class Tagger:
         alpha = log_sum_exp(terminal_expr)
         return alpha
 
-    def neg_log_loss(self, sent_words, words, tags, bios):
-        observations = self.build_tagging_graph(sent_words, words, tags, True)
+    def neg_log_loss(self, sent_words, words, bios):
+        observations = self.build_tagging_graph(sent_words, words, True)
         gold_score = self.score_sentence(observations, bios)
         forward_score = self.forward(observations)
         return forward_score - gold_score
@@ -205,8 +201,7 @@ class Tagger:
         renew_cg()
         words = [w for w, p, bio in sent]
         ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in sent]
-        ps = [self.vt.w2i.get(p, self.UNK_P) for w, p, bio in sent]
-        observations = self.build_tagging_graph(words, ws, ps, False)
+        observations = self.build_tagging_graph(words, ws, False)
         bios, score = self.viterbi_decoding(observations)
         return [self.vb.i2w[b] for b in bios]
 
@@ -242,11 +237,9 @@ class Tagger:
                         else:
                             print '\ndev accuracy:', res
                 ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in s]
-                ps = [self.vt.w2i[p] for w, p, bio in s]
                 bs = [self.vb.w2i[bio] for w, p, bio in s]
-                sum_errs = self.neg_log_loss([w for w,p,bios in s],ws, ps, bs)
+                sum_errs = self.neg_log_loss([w for w,p,bios in s],ws,  bs)
                 loss += sum_errs.scalar_value()
-                tagged += len(ps)
                 sum_errs.backward()
                 self.trainer.update()
             dev = list(self.read(options.dev_file))
@@ -335,8 +328,6 @@ if __name__ == '__main__':
                 [chars.add(x) for x in list(w)]
                 wc[w] += 1
         words.append('_UNK_')
-        tags.append('_UNK_')
-        tags.append('_START_')
         bios.append('_START_')
         bios.append('_STOP_')
         ch = list(chars)
