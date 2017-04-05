@@ -1,5 +1,5 @@
 from collections import Counter
-import random,os,codecs,pickle
+import random,os,codecs,pickle,time
 from optparse import OptionParser
 import numpy as np
 
@@ -261,14 +261,15 @@ class Tagger:
                 batch.append((ws,ps,bs))
 
                 if len(batch)>=self.batch:
-                    print i,'1'
+                    start = time.time()
                     for j in xrange(len(batch)):
                         ws,ps,bs = batch[j]
                         sum_errs = esum(self.pos_loss([w for w,_,_ in s], ws,  ps))
                     sum_errs.backward()
                     self.chunk_trainer.update()
                     renew_cg()
-                    print i,'2'
+                    print i,'1',time.time() - start
+                    start = time.time()
                     for j in xrange(len(batch)):
                         ws,ps,bs = batch[j]
                         sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  bs)
@@ -276,7 +277,7 @@ class Tagger:
                     sum_errs.backward()
                     self.chunk_trainer.update()
                     renew_cg()
-
+                    print i, '2', time.time() - start
                     batch = []
             dev = list(self.read(options.dev_file))
             good = bad = 0.0
