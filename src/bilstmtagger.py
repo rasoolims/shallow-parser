@@ -69,6 +69,7 @@ class Tagger:
         self.input_lstms = BiRNNBuilder(self.k, inp_dim, options.lstm_dims, self.model, LSTMBuilder)
         self.char_lstms = BiRNNBuilder(1, options.cembedding_dims, options.clstm_dims, self.model, LSTMBuilder)
         self.tag_lstm = BiRNNBuilder(self.k, tag_inp_dim, options.tag_lstm_dims, self.model, LSTMBuilder)
+        self.tagO = self.model.add_parameters((self.ntags, options.tag_lstm_dims))
 
     @staticmethod
     def read(fname):
@@ -94,6 +95,28 @@ class Tagger:
                 sent.append((w,p,'_'))
             yield sent
 
+    def build_pos_graph(self, sent_words, words, tags, is_train):
+        renew_cg()
+        char_lstms = []
+        for w in sent_words:
+            char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if  (c in self.chars.w2i and not is_train) or (is_train and random.random()>=0.001) else self.CE[self.chars.w2i[' ']] for c in ['<s>']+list(w)+['</s>']]))
+        wembs = [noise(self.WE[w], 0.1) if is_train else self.WE[w] for w in words]
+        evec = [self.extrn_lookup[self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[1] if self.edim > 0 else None for w in words]
+        inputs = [concatenate(filter(None, [wembs[i], evec[i],char_lstms[i][-1]])) for i in xrange(len(words))]
+        if self.drop:
+            [dropout(inputs[i],self.dropout) for i in xrange(len(inputs))]
+        input_lstm = self.input_lstms.transduce(inputs)
+
+        H1 = parameter(self.pH1) if self.pH1!=None else None
+        H2 = parameter(self.pH2) if self.pH2!=None else None
+        O = parameter(self.pO)
+        scores = []
+
+        for f in input_lstm:
+            score_t = O*(self.activation(H2*self.activation(H1 * f))) if H2!=None else O * (self.activation(H1 * f)) if self.pH1!=None  else O*f
+            scores.append(score_t)
+        return scores
+
     def build_tagging_graph(self, sent_words, words, is_train):
         renew_cg()
         char_lstms = []
@@ -104,7 +127,7 @@ class Tagger:
                     self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[1] if self.edim > 0 else None
                 for w in words]
         inputs = [concatenate(filter(None, [wembs[i], evec[i],char_lstms[i][-1]])) for i in xrange(len(words))]
-        if self.drop:
+        if self.drop and is_train:
             [dropout(inputs[i],self.dropout) for i in xrange(len(inputs))]
         input_lstm = self.input_lstms.transduce(inputs)
 
