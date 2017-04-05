@@ -255,7 +255,6 @@ class Tagger:
                     print loss / tagged
                     loss = 0
                     tagged = 0
-
                     self.validate(0, False)
                 ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in s]
                 ps = [self.vt.w2i[t] for w, t, bio in s]
@@ -271,7 +270,8 @@ class Tagger:
                     self.trainer.update()
                     renew_cg()
                     batch = []
-                self.validate(0, False)
+            self.trainer.status()
+            self.validate(0, False)
 
         for ITER in xrange(self.options.epochs):
             print 'ITER', ITER
@@ -299,6 +299,7 @@ class Tagger:
                     self.trainer.update()
                     renew_cg()
                     batch = []
+            self.trainer.status()
             best_dev = self.validate(best_dev)
         if not options.save_best or not options.dev_file:
             print 'Saving the final model'
@@ -311,9 +312,9 @@ class Tagger:
         if options.save_best and options.dev_file:
             for sent in dev:
                 bio_tags, pos_tags = self.tag_sent(sent)
-                golds_bois = [b for w, t, b in sent]
-                golds_pos = [t for w, t, b in sent]
-                for go, gp, gu, pp in zip(golds_bois, golds_pos, bio_tags, pos_tags):
+                gold_bois = [b for w, t, b in sent]
+                gold_pos = [t for w, t, b in sent]
+                for go, gp, gu, pp in zip(gold_bois, gold_pos, bio_tags, pos_tags):
                     if go == gu:
                         good += 1
                     else:
