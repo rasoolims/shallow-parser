@@ -265,11 +265,9 @@ class Tagger:
                     for j in xrange(len(batch)):
                         ws,ps,bs = batch[j]
                         sum_errs = esum(self.pos_loss([w for w,_,_ in s], ws,  ps))
-                        loss += sum_errs.scalar_value()
                     sum_errs.backward()
                     self.chunk_trainer.update()
                     renew_cg()
-                    loss = 0
                     for j in xrange(len(batch)):
                         ws,ps,bs = batch[j]
                         sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  bs)
