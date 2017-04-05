@@ -10,6 +10,7 @@ class Tagger:
         self.options = options
         self.activations = {'tanh': tanh, 'sigmoid': logistic, 'relu': rectify}
         self.activation = self.activations[options.activation]
+        self.batch = options.batch
         self.vw = util.Vocab.from_corpus([words])
         self.vt = util.Vocab.from_corpus([tags])
         self.vb = util.Vocab.from_corpus([bios])
@@ -213,6 +214,7 @@ class Tagger:
     def train(self):
         tagged = loss = 0
         best_dev = float('-inf')
+        batch = 0
         for ITER in xrange(self.options.epochs):
             print 'ITER', ITER
             random.shuffle(train)
@@ -247,8 +249,12 @@ class Tagger:
                 sum_errs = self.neg_log_loss([w for w,p,bios in s],ws, ps, bs)
                 loss += sum_errs.scalar_value()
                 tagged += len(ps)
-                sum_errs.backward()
-                self.trainer.update()
+                batch+=1
+                if batch>self.batch:
+                    sum_errs.backward()
+                    self.trainer.update()
+                    renew_cg()
+                    batch = 0
             dev = list(self.read(options.dev_file))
             good = bad = 0.0
             if options.save_best and options.dev_file:
@@ -307,6 +313,7 @@ class Tagger:
         parser.add_option("--dropout", type="float", dest="dropout", default=0.33, help='Dropout probability.')
         parser.add_option('--mem', type='int', dest='mem', default=2048)
         parser.add_option('--k', type='int', dest='k', help = 'word LSTM depth', default=1)
+        parser.add_option('--batch', type='int', dest='batch', default=50)
         return parser.parse_args()
 
 if __name__ == '__main__':
