@@ -261,6 +261,7 @@ class Tagger:
                 ps = [self.vt.w2i[t] for w, t, bio in s]
                 bs = [self.vb.w2i[bio] for w, p, bio in s]
                 batch.append((ws,ps,bs))
+                tagged += 1
 
                 if len(batch)>=self.batch:
                     start = time.time()
