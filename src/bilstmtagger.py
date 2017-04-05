@@ -92,15 +92,8 @@ class Tagger:
                 sent.append((w,p,'_'))
             yield sent
 
-    def get_pos_probs(self, sent_words, words, char_lstms, is_train):
-        for w in sent_words:
-            char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if  (c in self.chars.w2i and not is_train) or (is_train and random.random()>=0.001) else self.CE[self.chars.w2i[' ']] for c in ['<s>']+list(w)+['</s>']]))
-        wembs = [noise(self.WE[w], 0.1) if is_train else self.WE[w] for w in words]
-        evec = [self.extrn_lookup[self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[1] if self.edim > 0 else None for w in words]
-        inputs = [concatenate(filter(None, [wembs[i], evec[i],char_lstms[i][-1]])) for i in xrange(len(words))]
-        if self.drop:
-            [dropout(inputs[i],self.dropout) for i in xrange(len(inputs))]
-        input_lstm = self.input_lstms.transduce(inputs)
+    def get_pos_probs(self, sent_words, words, is_train):
+        input_lstm = self.get_lstm_features(is_train, sent_words, words)
 
         O = parameter(self.tagO)
         probs = []
@@ -109,8 +102,20 @@ class Tagger:
             probs.append(score_t)
         return probs
 
+    def get_lstm_features(self, is_train, sent_words, words):
+        char_lstms = []
+        for w in sent_words:
+            char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if (c in self.chars.w2i and not is_train) or (is_train and random.random() >= 0.001) else self.CE[self.chars.w2i[' ']] for c in  ['<s>'] + list(w) + ['</s>']]))
+        wembs = [noise(self.WE[w], 0.1) if is_train else self.WE[w] for w in words]
+        evec = [self.extrn_lookup[self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[1] if self.edim > 0 else None for w in words]
+        inputs = [concatenate(filter(None, [wembs[i], evec[i], char_lstms[i][-1]])) for i in xrange(len(words))]
+        if self.drop:
+            [dropout(inputs[i], self.dropout) for i in xrange(len(inputs))]
+        input_lstm = self.input_lstms.transduce(inputs)
+        return input_lstm
+
     def pos_loss(self, sent_words, words, tags):
-        probs = self.get_pos_probs(sent_words, words, [], True)
+        probs = self.get_pos_probs(sent_words, words, True)
         errs = []
         for i in xrange(len(tags)):
             err = -log(pick(probs[i], tags[i]))
@@ -118,15 +123,7 @@ class Tagger:
         return errs
 
     def build_tagging_graph(self, sent_words, words, is_train):
-        char_lstms = []
-        for w in sent_words:
-            char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if (c in self.chars.w2i and not is_train) or (is_train and random.random() >= 0.001) else self.CE[self.chars.w2i[' ']] for c in  ['<s>'] + list(w) + ['</s>']]))
-        wembs = [noise(self.WE[w], 0.1) if is_train else self.WE[w] for w in words]
-        evec = [self.extrn_lookup[self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[1] if self.edim > 0 else None for w in words]
-        inputs = [concatenate(filter(None, [wembs[i], evec[i], char_lstms[i][-1]])) for i in xrange(len(words))]
-        if self.drop and is_train:
-            [dropout(inputs[i],self.dropout) for i in xrange(len(inputs))]
-        input_lstm = self.input_lstms.transduce(inputs)
+        input_lstm = self.get_lstm_features(is_train, sent_words, words)
         H1 = parameter(self.pH1) if self.pH1!=None else None
         H2 = parameter(self.pH2) if self.pH2!=None else None
         O = parameter(self.pO)
@@ -266,7 +263,7 @@ class Tagger:
                 if len(batch)>=self.batch:
                     for i in xrange(len(batch)):
                         ws,ps,bs = batch[i]
-                        sum_errs = esum(self.pos_loss([w for w,p,bios in s], ws,  ps))
+                        sum_errs = esum(self.pos_loss([w for w,_,_ in s], ws,  ps))
                         loss += sum_errs.scalar_value()
                     sum_errs.backward()
                     self.chunk_trainer.update()
@@ -274,7 +271,7 @@ class Tagger:
                     loss = 0
                     for i in xrange(len(batch)):
                         ws,ps,bs = batch[i]
-                        sum_errs = self.neg_log_loss([w for w,p,bios in s], ws,  bs)
+                        sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  bs)
                         loss += sum_errs.scalar_value()
                     sum_errs.backward()
                     self.chunk_trainer.update()
