@@ -250,7 +250,7 @@ class Tagger:
                 loss += sum_errs.scalar_value()
                 tagged += len(ps)
                 batch+=1
-                if batch>self.batch:
+                if batch>=self.batch:
                     sum_errs.backward()
                     self.trainer.update()
                     renew_cg()
