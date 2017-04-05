@@ -252,6 +252,7 @@ class Tagger:
             for i, s in enumerate(train, 1):
                 if i % 1000 == 0:
                     self.trainer.status()
+                    print loss / tagged
                     loss = 0
                     tagged = 0
                     self.validate(0, False)
@@ -265,13 +266,17 @@ class Tagger:
                     for j in xrange(len(batch)):
                         ws,ps,_ = batch[j]
                         sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  ps, False)
+                        loss+= sum_errs.scalar_value()
                     sum_errs.backward()
                     self.trainer.update()
+                    tagged += len(ps)
                     renew_cg()
                     batch = []
             self.trainer.status()
             self.validate(0, False)
 
+        loss = 0
+        tagged = 0
         for ITER in xrange(self.options.epochs):
             print 'ITER', ITER
             random.shuffle(train)
