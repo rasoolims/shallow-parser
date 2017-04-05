@@ -33,6 +33,7 @@ class Tagger:
         self.drop = options.drop
         self.dropout = options.dropout
         self.transitions = self.chunk_model.add_lookup_parameters((self.nBios, self.nBios))
+        self.tag_transitions = self.chunk_model.add_lookup_parameters((self.ntags, self.ntags))
         self.edim = 0
         self.external_embedding = None
         if options.initial_embeddings is not None:
@@ -92,13 +93,13 @@ class Tagger:
                 sent.append((w,p,'_'))
             yield sent
 
-    def get_pos_probs(self, sent_words, words, is_train):
+    def build_pos_graph(self, sent_words, words, is_train):
         input_lstm = self.get_lstm_features(is_train, sent_words, words)
 
         O = parameter(self.tagO)
         probs = []
         for f in input_lstm:
-            score_t = softmax(O*f)
+            score_t = O*f
             probs.append(score_t)
         return probs
 
@@ -115,7 +116,7 @@ class Tagger:
         return input_lstm
 
     def pos_loss(self, sent_words, words, tags):
-        probs = self.get_pos_probs(sent_words, words, True)
+        probs = self.build_pos_graph(sent_words, words, True)
         errs = []
         for i in xrange(len(tags)):
             err = -log(pick(probs[i], tags[i]))
@@ -134,64 +135,49 @@ class Tagger:
             scores.append(score_t)
         return scores
 
-    def score_sentence(self, observations, bios):
-        assert len(observations) == len(bios)
+    def score_sentence(self, observations, labels, trans_matrix, dct):
+        assert len(observations) == len(labels)
         score_seq = [0]
         score = scalarInput(0)
-        bios = [self.vb.w2i['_START_']] + bios
+        labels = [dct['_START_']] + labels
         for i, obs in enumerate(observations):
-            score = score + pick(self.transitions[bios[i+1]],bios[i]) + pick(obs, bios[i+1])
+            score = score + pick(trans_matrix[labels[i+1]],labels[i]) + pick(obs, labels[i+1])
             score_seq.append(score.value())
-        score = score + pick(self.transitions[self.vb.w2i['_STOP_']],bios[-1])
+        score = score + pick(trans_matrix[dct['_STOP_']],labels[-1])
         return score
 
-    def forward(self, observations):
+    def forward(self, observations, ntags, trans_matrix, dct):
         def log_sum_exp(scores):
             npval = scores.npvalue()
             argmax_score = np.argmax(npval)
             max_score_expr = pick(scores, argmax_score)
-            max_score_expr_broadcast = concatenate([max_score_expr] * self.nBios)
+            max_score_expr_broadcast = concatenate([max_score_expr] * ntags)
             return max_score_expr + log(sum_cols(transpose(exp(scores - max_score_expr_broadcast))))
 
-        init_alphas = [-1e10] * self.nBios
-        init_alphas[self.vb.w2i['_START_']] = 0
+        init_alphas = [-1e10] * ntags
+        init_alphas[dct['_START_']] = 0
         for_expr = inputVector(init_alphas)
         for obs in observations:
             alphas_t = []
-            for next_tag in range(self.nBios):
-                obs_broadcast = concatenate([pick(obs, next_tag)] * self.nBios)
-                next_tag_expr = for_expr + self.transitions[next_tag] + obs_broadcast
+            for next_tag in range(ntags):
+                obs_broadcast = concatenate([pick(obs, next_tag)] * ntags)
+                next_tag_expr = for_expr + trans_matrix[next_tag] + obs_broadcast
                 alphas_t.append(log_sum_exp(next_tag_expr))
             for_expr = concatenate(alphas_t)
-        terminal_expr = for_expr + self.transitions[self.vb.w2i['_STOP_']]
+        terminal_expr = for_expr + trans_matrix[dct['_STOP_']]
         alpha = log_sum_exp(terminal_expr)
         return alpha
 
-    def neg_log_loss(self, sent_words, words, bios):
-        observations = self.build_tagging_graph(sent_words, words, True)
-        gold_score = self.score_sentence(observations, bios)
-        forward_score = self.forward(observations)
-        return forward_score - gold_score
-
-    def viterbi_loss(self,  sent_words,words,tags, bios):
-        observations = self.build_tagging_graph(sent_words,words,tags, True)
-        viterbi_tags, viterbi_score = self.viterbi_decoding(observations)
-        if viterbi_tags != bios:
-            gold_score = self.score_sentence(observations, bios)
-            return (viterbi_score - gold_score), viterbi_tags
-        else:
-            return dy.scalarInput(0), viterbi_tags
-
-    def viterbi_decoding(self, observations):
+    def viterbi_decoding(self, observations, trans_matrix, dct, nL):
         backpointers = []
-        init_vvars   = [-1e10] * self.nBios
-        init_vvars[self.vb.w2i['_START_']] = 0 # <Start> has all the probability
+        init_vvars   = [-1e10] * nL
+        init_vvars[dct['_START_']] = 0 # <Start> has all the probability
         for_expr = inputVector(init_vvars)
-        trans_exprs  = [self.transitions[idx] for idx in range(self.nBios)]
+        trans_exprs  = [trans_matrix[idx] for idx in range(nL)]
         for obs in observations:
             bptrs_t = []
             vvars_t = []
-            for next_tag in range(self.nBios):
+            for next_tag in range(nL):
                 next_tag_expr = for_expr + trans_exprs[next_tag]
                 next_tag_arr = next_tag_expr.npvalue()
                 best_tag_id  = np.argmax(next_tag_arr)
@@ -200,7 +186,7 @@ class Tagger:
             for_expr = concatenate(vvars_t) + obs
             backpointers.append(bptrs_t)
         # Perform final transition to terminal
-        terminal_expr = for_expr + trans_exprs[self.vb.w2i['_STOP_']]
+        terminal_expr = for_expr + trans_exprs[dct['_STOP_']]
         terminal_arr  = terminal_expr.npvalue()
         best_tag_id = np.argmax(terminal_arr)
         path_score  = pick(terminal_expr, best_tag_id)
@@ -211,16 +197,32 @@ class Tagger:
             best_path.append(best_tag_id)
         start = best_path.pop() # Remove the start symbol
         best_path.reverse()
-        assert start == self.vb.w2i['_START_']
+        assert start == dct['_START_']
         # Return best path and best path's score
         return best_path, path_score
+
+    def neg_log_loss(self, sent_words, words, labels, is_chunking):
+        observations = self.build_tagging_graph(sent_words, words, True) if is_chunking else self.build_pos_graph(sent_words, words, True)
+        gold_score = self.score_sentence(observations, labels, self.transitions if is_chunking else self.tag_transitions, self.vb.w2i if is_chunking else self.vt.w2i)
+        forward_score = self.forward(observations, self.nBios if is_chunking else self.ntags, self.transitions if is_chunking else self.tag_transitions, self.vb.w2i if is_chunking else self.vt.w2i)
+        return forward_score - gold_score
+
+    def viterbi_loss(self,  sent_words,words,tags, bios):
+        observations = self.build_tagging_graph(sent_words,words,tags, True)
+        viterbi_tags, viterbi_score = self.viterbi_decoding(observations,self.transitions,self.vb.w2i, self.nBios)
+        if viterbi_tags != bios:
+            gold_score = self.score_sentence(observations, bios, self.transitions, self.vb.w2i)
+            return (viterbi_score - gold_score), viterbi_tags
+        else:
+            return dy.scalarInput(0), viterbi_tags
+
 
     def tag_sent(self, sent):
         renew_cg()
         words = [w for w, p, bio in sent]
         ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in sent]
         observations = self.build_tagging_graph(words, ws, False)
-        bios, score = self.viterbi_decoding(observations)
+        bios, score = self.viterbi_decoding(observations,self.transitions,self.vb.w2i, self.nBios)
         return [self.vb.i2w[b] for b in bios]
 
     def train(self):
@@ -263,16 +265,16 @@ class Tagger:
                 if len(batch)>=self.batch:
                     start = time.time()
                     for j in xrange(len(batch)):
-                        ws,ps,bs = batch[j]
-                        sum_errs = esum(self.pos_loss([w for w,_,_ in s], ws,  ps))
+                        ws,ps,_ = batch[j]
+                        sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  ps, False)
                     sum_errs.backward()
                     self.chunk_trainer.update()
                     renew_cg()
                     print i,'1',time.time() - start
                     start = time.time()
                     for j in xrange(len(batch)):
-                        ws,ps,bs = batch[j]
-                        sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  bs)
+                        ws,_,bs = batch[j]
+                        sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  bs, True)
                         loss += sum_errs.scalar_value()
                     sum_errs.backward()
                     self.chunk_trainer.update()
@@ -368,6 +370,8 @@ if __name__ == '__main__':
         words.append('_UNK_')
         bios.append('_START_')
         bios.append('_STOP_')
+        tags.append('_START_')
+        tags.append('_STOP_')
         ch = list(chars)
 
         print 'writing params file'
