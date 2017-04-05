@@ -106,7 +106,7 @@ class Tagger:
                     self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[1] if self.edim > 0 else None
                 for w in words]
         inputs = [concatenate(filter(None, [wembs[i], pembs[i],evec[i],char_lstms[i][-1]])) for i in xrange(len(words))]
-        if self.drop:
+        if self.drop and is_train:
             [dropout(inputs[i],self.dropout) for i in xrange(len(inputs))]
         input_lstm = self.input_lstms.transduce(inputs)
 
