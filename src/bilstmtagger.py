@@ -19,7 +19,7 @@ class Tagger:
         self.chars = util.Vocab.from_corpus([chars])
         self.ntags = len(tags)
         self.nBios = self.vb.size()
-
+        print 'num of pos tags',self.ntags, 'num of bio tags',self.nBios
         self.chunk_model = Model()
         self.chunk_trainer = AdamTrainer(self.chunk_model)
 
