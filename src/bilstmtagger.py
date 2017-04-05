@@ -20,20 +20,20 @@ class Tagger:
         self.ntags = self.vt.size()
         self.nBios = self.vb.size()
         print 'num of pos tags',self.ntags, 'num of bio tags',self.nBios
-        self.chunk_model = Model()
-        self.chunk_trainer = AdamTrainer(self.chunk_model)
+        self.model = Model()
+        self.trainer = AdamTrainer(self.model)
 
-        self.WE = self.chunk_model.add_lookup_parameters((self.nwords, options.wembedding_dims))
-        self.CE = self.chunk_model.add_lookup_parameters((self.chars.size(), options.cembedding_dims))
-        self.pH1 = self.chunk_model.add_parameters((options.hidden_units, options.lstm_dims)) if options.hidden_units > 0 else None
-        self.pH2 = self.chunk_model.add_parameters((options.hidden2_units, options.hidden_units)) if options.hidden2_units > 0 else None
+        self.WE = self.model.add_lookup_parameters((self.nwords, options.wembedding_dims))
+        self.CE = self.model.add_lookup_parameters((self.chars.size(), options.cembedding_dims))
+        self.pH1 = self.model.add_parameters((options.hidden_units, options.lstm_dims)) if options.hidden_units > 0 else None
+        self.pH2 = self.model.add_parameters((options.hidden2_units, options.hidden_units)) if options.hidden2_units > 0 else None
         hdim = options.hidden2_units if options.hidden2_units>0 else options.hidden_units if options.hidden_units>0 else options.lstm_dims
-        self.pO = self.chunk_model.add_parameters((self.nBios, hdim))
+        self.pO = self.model.add_parameters((self.nBios, hdim))
         self.k = options.k
         self.drop = options.drop
         self.dropout = options.dropout
-        self.transitions = self.chunk_model.add_lookup_parameters((self.nBios, self.nBios))
-        self.tag_transitions = self.chunk_model.add_lookup_parameters((self.ntags, self.ntags))
+        self.transitions = self.model.add_lookup_parameters((self.nBios, self.nBios))
+        self.tag_transitions = self.model.add_lookup_parameters((self.ntags, self.ntags))
         self.edim = 0
         self.external_embedding = None
         if options.initial_embeddings is not None:
@@ -55,7 +55,7 @@ class Tagger:
             self.edim = len(self.external_embedding.values()[0])
             noextrn = [0.0 for _ in xrange(self.edim)]
             self.extrnd = {word: i + 3 for i, word in enumerate(self.external_embedding)}
-            self.extrn_lookup = self.chunk_model.add_lookup_parameters((len(self.external_embedding) + 3, self.edim))
+            self.extrn_lookup = self.model.add_lookup_parameters((len(self.external_embedding) + 3, self.edim))
             self.extrn_lookup.set_updated(False)
             for word, i in self.extrnd.iteritems():
                 self.extrn_lookup.init_row(i, self.external_embedding[word])
@@ -64,10 +64,12 @@ class Tagger:
             self.extrn_lookup.init_row(1, noextrn)
             print 'Loaded external embedding. Vector dimensions:', self.edim
 
-        inp_dim = options.wembedding_dims + self.edim + options.clstm_dims
-        self.input_lstms = BiRNNBuilder(self.k, inp_dim, options.lstm_dims, self.chunk_model, LSTMBuilder if not options.gru else GRUBuilder)
-        self.char_lstms = BiRNNBuilder(1, options.cembedding_dims, options.clstm_dims, self.chunk_model, LSTMBuilder if not options.gru else GRUBuilder)
-        self.tagO = self.chunk_model.add_parameters((self.ntags, options.lstm_dims))
+        tag_inp_dim = options.wembedding_dims + self.edim + options.clstm_dims
+        inp_dim = tag_inp_dim + self.ntags
+        self.chunk_lstms = BiRNNBuilder(self.k, inp_dim, options.lstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
+        self.tag_lstms = BiRNNBuilder(self.k, tag_inp_dim, options.tag_lstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
+        self.char_lstms = BiRNNBuilder(1, options.cembedding_dims, options.clstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
+        self.tagO = self.model.add_parameters((self.ntags, options.tag_lstm_dims))
 
     @staticmethod
     def read(fname):
@@ -94,7 +96,7 @@ class Tagger:
             yield sent
 
     def build_pos_graph(self, sent_words, words, is_train):
-        input_lstm = self.get_lstm_features(is_train, sent_words, words)
+        input_lstm = self.get_lstm_features(is_train, sent_words, words, False)[0]
 
         O = parameter(self.tagO)
         probs = []
@@ -103,17 +105,29 @@ class Tagger:
             probs.append(score_t)
         return probs
 
-    def get_lstm_features(self, is_train, sent_words, words):
-        char_lstms = []
-        for w in sent_words:
-            char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if (c in self.chars.w2i and not is_train) or (is_train and random.random() >= 0.001) else self.CE[self.chars.w2i[' ']] for c in  ['<s>'] + list(w) + ['</s>']]))
-        wembs = [noise(self.WE[w], 0.1) if is_train else self.WE[w] for w in words]
-        evec = [self.extrn_lookup[self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[1] if self.edim > 0 else None for w in words]
-        inputs = [concatenate(filter(None, [wembs[i], evec[i], char_lstms[i][-1]])) for i in xrange(len(words))]
-        if self.drop:
-            [dropout(inputs[i], self.dropout) for i in xrange(len(inputs))]
-        input_lstm = self.input_lstms.transduce(inputs)
-        return input_lstm
+    def get_lstm_features(self, is_train, sent_words, words, is_chunking):
+        if is_chunking:
+            tag_lstm, char_lstms, wembs, evec = self.get_lstm_features(is_train, sent_words, words, False)
+            O = parameter(self.tagO)
+            probs = []
+            for f in tag_lstm:
+                score_t = softmax(O * f)
+                probs.append(score_t)
+            inputs = [concatenate(filter(None, [wembs[i], evec[i], char_lstms[i][-1], probs[i]])) for i in xrange(len(words))]
+            input_lstm = self.chunk_lstms.transduce(inputs)
+            return input_lstm
+        else:
+            char_lstms = []
+            for w in sent_words:
+                char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if (c in self.chars.w2i and not is_train) or (is_train and random.random() >= 0.001) else self.CE[self.chars.w2i[' ']] for c in ['<s>'] + list(w) + ['</s>']]))
+            wembs = [noise(self.WE[w], 0.1) if is_train else self.WE[w] for w in words]
+            evec = [self.extrn_lookup[self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[
+                1] if self.edim > 0 else None for w in words]
+            inputs = [concatenate(filter(None, [wembs[i], evec[i], char_lstms[i][-1]])) for i in xrange(len(words))]
+            if self.drop:
+                [dropout(inputs[i], self.dropout) for i in xrange(len(inputs))]
+            input_lstm = self.tag_lstms.transduce(inputs)
+            return input_lstm, char_lstms, wembs, evec
 
     def pos_loss(self, sent_words, words, tags):
         probs = self.build_pos_graph(sent_words, words, True)
@@ -124,7 +138,7 @@ class Tagger:
         return errs
 
     def build_tagging_graph(self, sent_words, words, is_train):
-        input_lstm = self.get_lstm_features(is_train, sent_words, words)
+        input_lstm = self.get_lstm_features(is_train, sent_words, words, True)
         H1 = parameter(self.pH1) if self.pH1!=None else None
         H2 = parameter(self.pH2) if self.pH2!=None else None
         O = parameter(self.pO)
@@ -234,7 +248,7 @@ class Tagger:
             batch = []
             for i, s in enumerate(train, 1):
                 if i % 1000 == 0:
-                    self.chunk_trainer.status()
+                    self.trainer.status()
                     print loss / tagged
                     loss = 0
                     tagged = 0
@@ -268,14 +282,14 @@ class Tagger:
                         ws,ps,_ = batch[j]
                         sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  ps, False)
                     sum_errs.backward()
-                    self.chunk_trainer.update()
+                    self.trainer.update()
                     renew_cg()
                     for j in xrange(len(batch)):
                         ws,_,bs = batch[j]
                         sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  bs, True)
                         loss += sum_errs.scalar_value()
                     sum_errs.backward()
-                    self.chunk_trainer.update()
+                    self.trainer.update()
                     renew_cg()
                     batch = []
             dev = list(self.read(options.dev_file))
@@ -301,10 +315,10 @@ class Tagger:
             self.save(os.path.join(options.output, options.model))
 
     def load(self, f):
-        self.chunk_model.load(f)
+        self.model.load(f)
 
     def save(self, f):
-        self.chunk_model.save(f)
+        self.model.save(f)
 
     @staticmethod
     def parse_options():
@@ -325,6 +339,7 @@ class Tagger:
         parser.add_option('--hidden', type='int', dest='hidden_units', default=200)
         parser.add_option('--hidden2', type='int', dest='hidden2_units', default=0)
         parser.add_option('--lstmdims', type='int', dest='lstm_dims', default=200)
+        parser.add_option('--tlstmdims', type='int', dest='tag_lstm_dims', default=200)
         parser.add_option('--clstmdims', type='int', dest='clstm_dims', default=100)
         parser.add_option('--outdir', type='string', dest='output', default='')
         parser.add_option('--outfile', type='string', dest='outfile', default='')
