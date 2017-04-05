@@ -261,13 +261,14 @@ class Tagger:
                 batch.append((ws,ps,bs))
 
                 if len(batch)>=self.batch:
-                    print i
+                    print i,'1'
                     for j in xrange(len(batch)):
                         ws,ps,bs = batch[j]
                         sum_errs = esum(self.pos_loss([w for w,_,_ in s], ws,  ps))
                     sum_errs.backward()
                     self.chunk_trainer.update()
                     renew_cg()
+                    print i,'2'
                     for j in xrange(len(batch)):
                         ws,ps,bs = batch[j]
                         sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  bs)
