@@ -68,8 +68,8 @@ class Tagger:
             print 'Loaded external embedding. Vector dimensions:', self.edim
 
         inp_dim = options.wembedding_dims + options.pembedding_dims + self.edim + options.clstm_dims
-        self.input_lstms = BiRNNBuilder(self.k, inp_dim, options.lstm_dims, self.model, LSTMBuilder)
-        self.char_lstms = BiRNNBuilder(1, options.cembedding_dims, options.clstm_dims, self.model, LSTMBuilder)
+        self.input_lstms = BiRNNBuilder(self.k, inp_dim, options.lstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
+        self.char_lstms = BiRNNBuilder(1, options.cembedding_dims, options.clstm_dims, self.model, LSTMBuilder  if not options.gru else GRUBuilder)
 
     @staticmethod
     def read(fname):
@@ -299,6 +299,7 @@ class Tagger:
         parser.add_option('--pembedding', type='int', dest='pembedding_dims', default=30)
         parser.add_option('--lembedding', type='int', dest='lembedding_dims', default=30)
         parser.add_option('--epochs', type='int', dest='epochs', default=5)
+        parser.add_option("--gru", action="store_true", dest="gru", default=False, help='Use GRU instead of LSTM.')
         parser.add_option('--hidden', type='int', dest='hidden_units', default=200)
         parser.add_option('--hidden2', type='int', dest='hidden2_units', default=0)
         parser.add_option('--lstmdims', type='int', dest='lstm_dims', default=200)
