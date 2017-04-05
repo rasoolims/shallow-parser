@@ -261,7 +261,6 @@ class Tagger:
                 batch.append((ws,ps,bs))
 
                 if len(batch)>=self.batch:
-                    print 'train tagger'
                     for j in xrange(len(batch)):
                         ws,ps,bs = batch[j]
                         sum_errs = esum(self.pos_loss([w for w,_,_ in s], ws,  ps))
@@ -270,7 +269,6 @@ class Tagger:
                     self.chunk_trainer.update()
                     renew_cg()
                     loss = 0
-                    print 'train chunker'
                     for j in xrange(len(batch)):
                         ws,ps,bs = batch[j]
                         sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  bs)
