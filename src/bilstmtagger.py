@@ -48,7 +48,7 @@ class Tagger:
             for word in self.vw.w2i.keys():
                if word in initial_embeddings_vec:
                    assert options.wembedding_dims == len(initial_embeddings_vec[word])
-                   self.WE.init_row(self.vw.w2i.get(word), initial_embeddings_vec[word])
+                    self.WE.init_row(self.vw.w2i.get(word), initial_embeddings_vec[word])
         if options.external_embedding is not None:
             external_embedding_fp = open(options.external_embedding, 'r')
             external_embedding_fp.readline()
