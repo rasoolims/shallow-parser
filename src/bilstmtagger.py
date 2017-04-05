@@ -12,6 +12,7 @@ class Tagger:
         self.activation = self.activations[options.activation]
         self.vw = util.Vocab.from_corpus([words])
         self.vb = util.Vocab.from_corpus([bios])
+        self.vt = util.Vocab.from_corpus([tags])
         self.UNK_W = self.vw.w2i['_UNK_']
 
         self.nwords = self.vw.size()
@@ -63,9 +64,11 @@ class Tagger:
             self.extrn_lookup.init_row(1, noextrn)
             print 'Loaded external embedding. Vector dimensions:', self.edim
 
-        inp_dim = options.wembedding_dims + self.edim + options.clstm_dims
+        tag_inp_dim = options.wembedding_dims + self.edim + options.clstm_dims
+        inp_dim = tag_inp_dim + self.ntags
         self.input_lstms = BiRNNBuilder(self.k, inp_dim, options.lstm_dims, self.model, LSTMBuilder)
         self.char_lstms = BiRNNBuilder(1, options.cembedding_dims, options.clstm_dims, self.model, LSTMBuilder)
+        self.tag_lstm = BiRNNBuilder(self.k, tag_inp_dim, options.tag_lstm_dims, self.model, LSTMBuilder)
 
     @staticmethod
     def read(fname):
@@ -237,6 +240,7 @@ class Tagger:
                         else:
                             print '\ndev accuracy:', res
                 ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in s]
+                ps = [self.vt.w2i[t] for w, t, bio in s]
                 bs = [self.vb.w2i[bio] for w, p, bio in s]
                 sum_errs = self.neg_log_loss([w for w,p,bios in s],ws,  bs)
                 loss += sum_errs.scalar_value()
@@ -290,6 +294,7 @@ class Tagger:
         parser.add_option('--hidden', type='int', dest='hidden_units', default=200)
         parser.add_option('--hidden2', type='int', dest='hidden2_units', default=0)
         parser.add_option('--lstmdims', type='int', dest='lstm_dims', default=200)
+        parser.add_option('--tag_lstmdims', type='int', dest='tag_lstm_dims', default=200)
         parser.add_option('--clstmdims', type='int', dest='clstm_dims', default=100)
         parser.add_option('--outdir', type='string', dest='output', default='')
         parser.add_option('--outfile', type='string', dest='outfile', default='')
