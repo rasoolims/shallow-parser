@@ -14,7 +14,7 @@ class Tagger:
         self.vb = util.Vocab.from_corpus([bios])
         self.vt = util.Vocab.from_corpus([tags])
         self.UNK_W = self.vw.w2i['_UNK_']
-
+        self.batch = options.batch
         self.nwords = self.vw.size()
         self.chars = util.Vocab.from_corpus([chars])
         self.ntags = len(tags)
@@ -95,9 +95,8 @@ class Tagger:
                 sent.append((w,p,'_'))
             yield sent
 
-    def build_pos_graph(self, sent_words, words, tags, is_train):
+    def get_pos_probs(self, sent_words, words, char_lstms, is_train):
         renew_cg()
-        char_lstms = []
         for w in sent_words:
             char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if  (c in self.chars.w2i and not is_train) or (is_train and random.random()>=0.001) else self.CE[self.chars.w2i[' ']] for c in ['<s>']+list(w)+['</s>']]))
         wembs = [noise(self.WE[w], 0.1) if is_train else self.WE[w] for w in words]
@@ -105,28 +104,32 @@ class Tagger:
         inputs = [concatenate(filter(None, [wembs[i], evec[i],char_lstms[i][-1]])) for i in xrange(len(words))]
         if self.drop:
             [dropout(inputs[i],self.dropout) for i in xrange(len(inputs))]
-        input_lstm = self.input_lstms.transduce(inputs)
+        input_lstm = self.tag_lstm.transduce(inputs)
 
-        H1 = parameter(self.pH1) if self.pH1!=None else None
-        H2 = parameter(self.pH2) if self.pH2!=None else None
-        O = parameter(self.pO)
-        scores = []
-
+        O = parameter(self.tagO)
+        probs = []
         for f in input_lstm:
-            score_t = O*(self.activation(H2*self.activation(H1 * f))) if H2!=None else O * (self.activation(H1 * f)) if self.pH1!=None  else O*f
-            scores.append(score_t)
-        return scores
+            score_t = softmax(O*f)
+            probs.append(score_t)
+        return probs
+
+    def pos_loss(self, sent_words, words, tags):
+        probs = self.get_pos_probs(sent_words, words, [], True)
+        errs = []
+        for i in xrange(len(tags)):
+            err = -log(pick(probs[i], tags[i]))
+            errs.append(err)
+        return errs
 
     def build_tagging_graph(self, sent_words, words, is_train):
         renew_cg()
         char_lstms = []
-        for w in sent_words:
-            char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if  (c in self.chars.w2i and not is_train) or (is_train and random.random()>=0.001) else self.CE[self.chars.w2i[' ']] for c in ['<s>']+list(w)+['</s>']]))
+        tags_porbs = self.get_pos_probs(sent_words, words, char_lstms, is_train)
         wembs = [noise(self.WE[w], 0.1) if is_train else self.WE[w] for w in words]
         evec = [self.extrn_lookup[
                     self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[1] if self.edim > 0 else None
                 for w in words]
-        inputs = [concatenate(filter(None, [wembs[i], evec[i],char_lstms[i][-1]])) for i in xrange(len(words))]
+        inputs = [concatenate(filter(None, [wembs[i], evec[i],char_lstms[i][-1],tags_porbs[i]])) for i in xrange(len(words))]
         if self.drop and is_train:
             [dropout(inputs[i],self.dropout) for i in xrange(len(inputs))]
         input_lstm = self.input_lstms.transduce(inputs)
@@ -222,7 +225,6 @@ class Tagger:
         # Return best path and best path's score
         return best_path, path_score
 
-
     def tag_sent(self, sent):
         renew_cg()
         words = [w for w, p, bio in sent]
@@ -237,6 +239,7 @@ class Tagger:
         for ITER in xrange(self.options.epochs):
             print 'ITER', ITER
             random.shuffle(train)
+            batch = []
             for i, s in enumerate(train, 1):
                 if i % 1000 == 0:
                     self.trainer.status()
@@ -265,10 +268,26 @@ class Tagger:
                 ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in s]
                 ps = [self.vt.w2i[t] for w, t, bio in s]
                 bs = [self.vb.w2i[bio] for w, p, bio in s]
-                sum_errs = self.neg_log_loss([w for w,p,bios in s],ws,  bs)
-                loss += sum_errs.scalar_value()
-                sum_errs.backward()
-                self.trainer.update()
+                batch.append((ws,ps,bs))
+
+                if len(batch)>=self.batch:
+                    for i in xrange(len(batch)):
+                        ws,ps,bs = batch[i]
+                        sum_errs = esum(self.pos_loss([w for w,p,bios in s], ws,  ps))
+                        loss += sum_errs.scalar_value()
+                    sum_errs.backward()
+                    self.trainer.update()
+                    renew_cg()
+
+                    for i in xrange(len(batch)):
+                        ws,ps,bs = batch[i]
+                        sum_errs = self.neg_log_loss([w for w,p,bios in s], ws,  bs)
+                        loss += sum_errs.scalar_value()
+                    sum_errs.backward()
+                    self.trainer.update()
+                    renew_cg()
+
+                    batch = []
             dev = list(self.read(options.dev_file))
             good = bad = 0.0
             if options.save_best and options.dev_file:
@@ -328,6 +347,7 @@ class Tagger:
         parser.add_option("--dropout", type="float", dest="dropout", default=0.33, help='Dropout probability.')
         parser.add_option('--mem', type='int', dest='mem', default=2048)
         parser.add_option('--k', type='int', dest='k', help = 'word LSTM depth', default=1)
+        parser.add_option('--batch', type='int', dest='batch', default=50)
         return parser.parse_args()
 
 if __name__ == '__main__':
