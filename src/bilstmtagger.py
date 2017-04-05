@@ -252,7 +252,6 @@ class Tagger:
             for i, s in enumerate(train, 1):
                 if i % 1000 == 0:
                     self.trainer.status()
-                    print loss / tagged
                     loss = 0
                     tagged = 0
                     self.validate(0, False)
