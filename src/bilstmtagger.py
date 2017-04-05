@@ -261,6 +261,7 @@ class Tagger:
                 batch.append((ws,ps,bs))
 
                 if len(batch)>=self.batch:
+                    print i
                     for j in xrange(len(batch)):
                         ws,ps,bs = batch[j]
                         sum_errs = esum(self.pos_loss([w for w,_,_ in s], ws,  ps))
