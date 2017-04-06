@@ -261,15 +261,15 @@ class Tagger:
                 tagged += len(ps)
 
                 if len(batch)>=self.batch:
-                    for j in xrange(len(batch)):
-                        ws,ps,_ = batch[j]
-                        sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  ps, False)
-                        loss+= sum_errs.scalar_value()
-                    sum_errs.backward()
-                    self.trainer.update()
-                    renew_cg()
-
-                    if ITER>=options.pos_epochs:
+                    if ITER < options.pos_epochs:
+                        for j in xrange(len(batch)):
+                            ws,ps,_ = batch[j]
+                            sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  ps, False)
+                            loss+= sum_errs.scalar_value()
+                        sum_errs.backward()
+                        self.trainer.update()
+                        renew_cg()
+                    else:
                         for j in xrange(len(batch)):
                             ws,_,bs = batch[j]
                             sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  bs, True)
