@@ -441,9 +441,9 @@ if __name__ == '__main__':
             output = list()
             bio_tags,pos_tags = tagger.tag_sent(sent)
             if options.eval_format:
-                 [output.append(' '.join([sent[i][0], pos_tags[i][1], sent[i][2], bio_tags[i]])) for i in xrange(len(bio_tags))]
+                 [output.append(' '.join([sent[i][0], pos_tags[i], sent[i][2], bio_tags[i]])) for i in xrange(len(bio_tags))]
             else:
-                [output.append(' '.join([sent[i][0], pos_tags[i][1], bio_tags[i]])) for i in xrange(len(bio_tags))]
+                [output.append(' '.join([sent[i][0], pos_tags[i], bio_tags[i]])) for i in xrange(len(bio_tags))]
             writer.write('\n'.join(output))
             writer.write('\n\n')
         print 'done!'
