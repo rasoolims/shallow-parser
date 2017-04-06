@@ -253,7 +253,7 @@ class Tagger:
                     print loss / tagged
                     loss = 0
                     tagged = 0
-                    best_dev = self.validate(best_dev, ITER>options.pos_epochs)
+                    best_dev = self.validate(best_dev, ITER>=options.pos_epochs)
                 ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in s]
                 ps = [self.vt.w2i[t] for w, t, bio in s]
                 bs = [self.vb.w2i[bio] for w, p, bio in s]
@@ -269,7 +269,7 @@ class Tagger:
                     self.trainer.update()
                     renew_cg()
 
-                    if ITER>options.pos_epochs:
+                    if ITER>=options.pos_epochs:
                         for j in xrange(len(batch)):
                             ws,_,bs = batch[j]
                             sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  bs, True)
@@ -280,7 +280,7 @@ class Tagger:
                     batch = []
             self.trainer.status()
             print loss / tagged
-            best_dev = self.validate(best_dev, ITER>options.pos_epochs)
+            best_dev = self.validate(best_dev, ITER>=options.pos_epochs)
         if not options.save_best or not options.dev_file:
             print 'Saving the final model'
             self.save(os.path.join(options.output, options.model))
