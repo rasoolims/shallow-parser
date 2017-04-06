@@ -243,9 +243,7 @@ class Tagger:
     def train(self):
         tagged, loss = 0,0
         best_dev = float('-inf')
-
-        # First train pos tagger for a while
-        for ITER in xrange(self.options.pos_epochs):
+        for ITER in xrange(self.options.epochs):
             print 'ITER', ITER
             random.shuffle(train)
             batch = []
@@ -255,7 +253,7 @@ class Tagger:
                     print loss / tagged
                     loss = 0
                     tagged = 0
-                    self.validate(0, False)
+                    best_dev = self.validate(best_dev, ITER>options.pos_epochs)
                 ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in s]
                 ps = [self.vt.w2i[t] for w, t, bio in s]
                 bs = [self.vb.w2i[bio] for w, p, bio in s]
@@ -269,32 +267,8 @@ class Tagger:
                         loss+= sum_errs.scalar_value()
                     sum_errs.backward()
                     self.trainer.update()
-                    tagged += len(ps)
                     renew_cg()
-                    batch = []
-            self.trainer.status()
-            self.validate(0, False)
 
-        loss = 0
-        tagged = 0
-        for ITER in xrange(self.options.epochs):
-            print 'ITER', ITER
-            random.shuffle(train)
-            batch = []
-            for i, s in enumerate(train, 1):
-                if i % 1000 == 0:
-                    self.trainer.status()
-                    print loss / tagged
-                    loss = 0
-                    tagged = 0
-                    best_dev = self.validate(best_dev)
-                ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in s]
-                ps = [self.vt.w2i[t] for w, t, bio in s]
-                bs = [self.vb.w2i[bio] for w, p, bio in s]
-                batch.append((ws,ps,bs))
-                tagged += len(ps)
-
-                if len(batch)>=self.batch:
                     for j in xrange(len(batch)):
                         ws,_,bs = batch[j]
                         sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  bs, True)
@@ -304,7 +278,8 @@ class Tagger:
                     renew_cg()
                     batch = []
             self.trainer.status()
-            best_dev = self.validate(best_dev)
+            print loss / tagged
+            best_dev = self.validate(best_dev, ITER>options.pos_epochs)
         if not options.save_best or not options.dev_file:
             print 'Saving the final model'
             self.save(os.path.join(options.output, options.model))
