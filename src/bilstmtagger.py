@@ -8,6 +8,10 @@ import util
 class Tagger:
     def __init__(self, options, words, tags, bios, chars):
         self.options = options
+        self.words = words
+        self.tags = tags
+        self.bios = bios
+        self.characters = chars
         self.activations = {'tanh': tanh, 'sigmoid': logistic, 'relu': rectify}
         self.activation = self.activations[options.activation]
         self.vw = util.Vocab.from_corpus([words])
@@ -25,6 +29,7 @@ class Tagger:
 
         self.WE = self.chunk_model.add_lookup_parameters((self.nwords, options.wembedding_dims))
         self.CE = self.chunk_model.add_lookup_parameters((self.chars.size(), options.cembedding_dims))
+        self.PE = self.chunk_model.add_lookup_parameters((self.ntags, options.pembedding_dims))
         self.pH1 = self.chunk_model.add_parameters((options.hidden_units, options.lstm_dims)) if options.hidden_units > 0 else None
         self.pH2 = self.chunk_model.add_parameters((options.hidden2_units, options.hidden_units)) if options.hidden2_units > 0 else None
         hdim = options.hidden2_units if options.hidden2_units>0 else options.hidden_units if options.hidden_units>0 else options.lstm_dims
@@ -213,18 +218,22 @@ class Tagger:
         forward_score = self.forward(observations, self.nBios if is_chunking else self.ntags, self.transitions if is_chunking else self.tag_transitions, self.vb.w2i if is_chunking else self.vt.w2i)
         return forward_score - gold_score
 
-    def tag_sent(self, sent):
+    def tag_sent(self, sent, pos_tagger):
         renew_cg()
         words = [w for w, p, bio in sent]
         ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in sent]
         observations,tag_scores = self.build_chunking_graph(words, ws, False)
         bios, score = self.viterbi_decoding(observations,self.transitions,self.vb.w2i, self.nBios)
         pos_tags, _ = self.viterbi_decoding(tag_scores,self.tag_transitions,self.vt.w2i, self.ntags)
+        if pos_tagger:
+            observations, tag_scores = pos_tagger.build_chunking_graph(words, ws, False)
+            pos_tags, _ = pos_tagger.viterbi_decoding(tag_scores, pos_tagger.tag_transitions, pos_tagger.vt.w2i, pos_tagger.ntags)
         return [self.vb.i2w[b] for b in bios],[self.vt.i2w[t] for t in pos_tags]
 
     def train(self):
         tagged, loss = 0,0
         best_dev = float('-inf')
+        pos_tagger = None
         for ITER in xrange(self.options.epochs):
             print 'ITER', ITER
             random.shuffle(train)
@@ -235,7 +244,7 @@ class Tagger:
                     print loss / tagged
                     loss = 0
                     tagged = 0
-                    best_dev = self.validate(best_dev, ITER>=options.pos_epochs)
+                    best_dev = self.validate(best_dev, ITER>=options.pos_epochs, pos_tagger)
                 ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in s]
                 ps = [self.vt.w2i[t] for w, t, bio in s]
                 bs = [self.vb.w2i[bio] for w, p, bio in s]
@@ -243,6 +252,9 @@ class Tagger:
                 tagged += len(ps)
 
                 if len(batch)>=self.batch:
+                    if not pos_tagger:
+                        print 'loading pos tagger model'
+                        pos_tagger = Tagger(self.options, self.words, self.tags, self.bios, self.characters)
                     if ITER < options.pos_epochs:
                         for j in xrange(len(batch)):
                             ws,ps,_ = batch[j]
@@ -262,18 +274,18 @@ class Tagger:
                     batch = []
             self.trainer.status()
             print loss / tagged
-            best_dev = self.validate(best_dev, ITER>=options.pos_epochs)
+            best_dev = self.validate(best_dev, ITER>=options.pos_epochs, pos_tagger)
         if not options.save_best or not options.dev_file:
             print 'Saving the final model'
             self.save(os.path.join(options.output, options.model))
 
-    def validate(self, best_dev, save=True):
+    def validate(self, best_dev, save_as_chunk=True, pos_tagger = None):
         dev = list(self.read(options.dev_file))
         good = bad = 0.0
         good_pos = bad_pos = 0.0
         if options.save_best and options.dev_file:
             for sent in dev:
-                bio_tags, pos_tags = self.tag_sent(sent)
+                bio_tags, pos_tags = self.tag_sent(sent, pos_tagger)
                 gold_bois = [b for w, t, b in sent]
                 gold_pos = [t for w, t, b in sent]
                 for go, gp, gu, pp in zip(gold_bois, gold_pos, bio_tags, pos_tags):
@@ -288,7 +300,7 @@ class Tagger:
                         bad_pos += 1
             res = good / (good + bad)
             pos_res = good_pos / (good_pos + bad_pos)
-            if save:
+            if save_as_chunk:
                 if res > best_dev:
                     print 'dev accuracy (saving):', res, 'pos accuracy', pos_res
                     best_dev = res
@@ -296,7 +308,12 @@ class Tagger:
                 else:
                     print 'dev accuracy:', res, 'pos accuracy', pos_res
             else:
-                print 'dev pos accuracy', pos_res
+                if res > pos_res:
+                    print 'pos accuracy (saving)', pos_res
+                    best_dev = pos_res
+                    self.save(os.path.join(options.output, options.model+'.pos'))
+                else:
+                    print 'pos accuracy', pos_res
         return best_dev
 
     def load(self, f):
@@ -320,8 +337,8 @@ class Tagger:
         parser.add_option('--wembedding', type='int', dest='wembedding_dims', default=128)
         parser.add_option('--cembedding', type='int', dest='cembedding_dims', help='size of character embeddings', default=30)
         parser.add_option('--pembedding', type='int', dest='pembedding_dims', default=30)
-        parser.add_option('--epochs', type='int', dest='epochs', default=5)
-        parser.add_option('--pos_epochs', type='int', dest='pos_epochs', default=2)
+        parser.add_option('--epochs', type='int', dest='epochs', default=10)
+        parser.add_option('--pos_epochs', type='int', dest='pos_epochs', default=3)
         parser.add_option('--hidden', type='int', dest='hidden_units', default=200)
         parser.add_option('--hidden2', type='int', dest='hidden2_units', default=0)
         parser.add_option('--lstmdims', type='int', dest='lstm_dims', default=200)
@@ -386,18 +403,19 @@ if __name__ == '__main__':
         print 'reading params'
         with open(options.params, 'r') as paramsfp:
             words, bio_tags, bios, ch, opt = pickle.load(paramsfp)
-        tagger = Tagger(opt, words, bio_tags, bios, ch)
-
+        chunker = Tagger(opt, words, bio_tags, bios, ch)
+        pos_tagger = Tagger(opt, words, bio_tags, bios, ch)
         print 'loading model'
         print options.model
-        tagger.load(options.model)
+        chunker.load(options.model)
+        pos_tagger.load(options.model+'.pos')
 
         test = list(Tagger.read(options.conll_test))
         print 'loaded',len(test),'sentences!'
         writer = codecs.open(options.outfile, 'w')
         for sent in test:
             output = list()
-            bio_tags,pos_tags = tagger.tag_sent(sent)
+            bio_tags,pos_tags = chunker.tag_sent(sent, pos_tagger)
             if options.eval_format:
                  [output.append(' '.join([sent[i][0], pos_tags[i], sent[i][2], bio_tags[i]])) for i in xrange(len(bio_tags))]
             else:
@@ -411,10 +429,12 @@ if __name__ == '__main__':
         print 'reading params'
         with open(options.params, 'r') as paramsfp:
             words, bio_tags, bios, ch, opt = pickle.load(paramsfp)
-        tagger = Tagger(opt, words, bio_tags, bios, ch)
+        chunker = Tagger(opt, words, bio_tags, bios, ch)
+        pos_tagger = Tagger(opt, words, bio_tags, bios, ch)
         print 'loading model'
         print options.model
-        tagger.load(options.model)
+        chunker.load(options.model)
+        pos_tagger.load(options.model+'.pos')
 
         inputs = options.inputs.strip().split(',')
         for input in inputs:
@@ -424,7 +444,7 @@ if __name__ == '__main__':
             writer = codecs.open(input+options.ext, 'w')
             for sent in test:
                 output = list()
-                bio_tags,pos_tags = tagger.tag_sent(sent)
+                bio_tags,pos_tags = chunker.tag_sent(sent, pos_tagger)
                 if options.eval_format:
                      [output.append(' '.join([sent[i][0], pos_tags[i][1], sent[i][2], bio_tags[i]])) for i in xrange(len(bio_tags))]
                 else:
