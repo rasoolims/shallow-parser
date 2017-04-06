@@ -24,21 +24,21 @@ class Tagger:
         self.ntags = self.vt.size()
         self.nBios = self.vb.size()
         print 'num of pos tags',self.ntags, 'num of bio tags',self.nBios
-        self.chunk_model = Model()
-        self.trainer = AdamTrainer(self.chunk_model)
+        self.model = Model()
+        self.trainer = AdamTrainer(self.model)
 
-        self.WE = self.chunk_model.add_lookup_parameters((self.nwords, options.wembedding_dims))
-        self.CE = self.chunk_model.add_lookup_parameters((self.chars.size(), options.cembedding_dims))
-        self.PE = self.chunk_model.add_lookup_parameters((self.ntags, options.pembedding_dims))
-        self.pH1 = self.chunk_model.add_parameters((options.hidden_units, options.lstm_dims)) if options.hidden_units > 0 else None
-        self.pH2 = self.chunk_model.add_parameters((options.hidden2_units, options.hidden_units)) if options.hidden2_units > 0 else None
+        self.WE = self.model.add_lookup_parameters((self.nwords, options.wembedding_dims))
+        self.CE = self.model.add_lookup_parameters((self.chars.size(), options.cembedding_dims))
+        self.PE = self.model.add_lookup_parameters((self.ntags, options.pembedding_dims))
+        self.H1 = self.model.add_parameters((options.hidden_units, options.lstm_dims)) if options.hidden_units > 0 else None
+        self.H2 = self.model.add_parameters((options.hidden2_units, options.hidden_units)) if options.hidden2_units > 0 else None
         hdim = options.hidden2_units if options.hidden2_units>0 else options.hidden_units if options.hidden_units>0 else options.lstm_dims
-        self.pO = self.chunk_model.add_parameters((self.nBios, hdim))
+        self.O = self.model.add_parameters((self.nBios, hdim))
         self.k = options.k
         self.drop = options.drop
         self.dropout = options.dropout
-        self.transitions = self.chunk_model.add_lookup_parameters((self.nBios, self.nBios))
-        self.tag_transitions = self.chunk_model.add_lookup_parameters((self.ntags, self.ntags))
+        self.transitions = self.model.add_lookup_parameters((self.nBios, self.nBios))
+        self.tag_transitions = self.model.add_lookup_parameters((self.ntags, self.ntags))
         self.edim = 0
         self.external_embedding = None
         if options.initial_embeddings is not None:
@@ -60,7 +60,7 @@ class Tagger:
             self.edim = len(self.external_embedding.values()[0])
             noextrn = [0.0 for _ in xrange(self.edim)]
             self.extrnd = {word: i + 3 for i, word in enumerate(self.external_embedding)}
-            self.extrn_lookup = self.chunk_model.add_lookup_parameters((len(self.external_embedding) + 3, self.edim))
+            self.extrn_lookup = self.model.add_lookup_parameters((len(self.external_embedding) + 3, self.edim))
             self.extrn_lookup.set_updated(False)
             for word, i in self.extrnd.iteritems():
                 self.extrn_lookup.init_row(i, self.external_embedding[word])
@@ -70,11 +70,11 @@ class Tagger:
             print 'Loaded external embedding. Vector dimensions:', self.edim
 
         tag_inp_dim = options.wembedding_dims + self.edim + options.clstm_dims
-        inp_dim = tag_inp_dim + self.ntags
-        self.chunk_lstms = BiRNNBuilder(self.k, inp_dim, options.lstm_dims, self.chunk_model, LSTMBuilder if not options.gru else GRUBuilder)
-        self.tag_lstms = BiRNNBuilder(self.k, tag_inp_dim, options.tag_lstm_dims, self.chunk_model, LSTMBuilder if not options.gru else GRUBuilder)
-        self.char_lstms = BiRNNBuilder(1, options.cembedding_dims, options.clstm_dims, self.chunk_model, LSTMBuilder if not options.gru else GRUBuilder)
-        self.tagO = self.chunk_model.add_parameters((self.ntags, options.tag_lstm_dims))
+        inp_dim = tag_inp_dim + self.ntags + options.pembedding_dims
+        self.chunk_lstms = BiRNNBuilder(self.k, inp_dim, options.lstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
+        self.tag_lstms = BiRNNBuilder(self.k, tag_inp_dim, options.tag_lstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
+        self.char_lstms = BiRNNBuilder(1, options.cembedding_dims, options.clstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
+        self.tagO = self.model.add_parameters((self.ntags, options.tag_lstm_dims))
 
     @staticmethod
     def read(fname):
@@ -110,15 +110,25 @@ class Tagger:
             probs.append(score_t)
         return probs
 
-    def get_lstm_features(self, is_train, sent_words, words, is_chunking):
+    def get_tag_scores(self,is_train, sent_words, words):
+        tag_lstm, char_lstms, wembs, evec = self.get_lstm_features(is_train, sent_words, words, False)
+        O = parameter(self.tagO)
+        tag_scores = []
+        for f in tag_lstm:
+            score_t = O * f
+            tag_scores.append(score_t)
+        return tag_scores
+
+    def get_lstm_features(self, is_train, sent_words, words, is_chunking, predicated_pos = None):
         if is_chunking:
             tag_lstm, char_lstms, wembs, evec = self.get_lstm_features(is_train, sent_words, words, False)
+            pembs = [noise(self.PE[p], 0.001) if is_train else self.PE[p] for p in predicated_pos]
             O = parameter(self.tagO)
             tag_scores = []
             for f in tag_lstm:
                 score_t = O * f
                 tag_scores.append(score_t)
-            inputs = [concatenate(filter(None, [wembs[i], evec[i], char_lstms[i][-1], softmax(tag_scores[i])])) for i in xrange(len(words))]
+            inputs = [concatenate(filter(None, [wembs[i], evec[i], char_lstms[i][-1], softmax(tag_scores[i]),pembs[i]])) for i in xrange(len(words))]
             input_lstm = self.chunk_lstms.transduce(inputs)
             return input_lstm,tag_scores
         else:
@@ -134,15 +144,15 @@ class Tagger:
             input_lstm = self.tag_lstms.transduce(inputs)
             return input_lstm, char_lstms, wembs, evec
 
-    def build_chunking_graph(self, sent_words, words, is_train):
-        input_lstm,pos_probs = self.get_lstm_features(is_train, sent_words, words, True)
-        H1 = parameter(self.pH1) if self.pH1!=None else None
-        H2 = parameter(self.pH2) if self.pH2!=None else None
-        O = parameter(self.pO)
+    def build_chunking_graph(self, sent_words, words, is_train, predicated_pos):
+        input_lstm,pos_probs = self.get_lstm_features(is_train, sent_words, words, True, predicated_pos)
+        H1 = parameter(self.H1) if self.H1 != None else None
+        H2 = parameter(self.H2) if self.H2 != None else None
+        O = parameter(self.O)
         scores = []
 
         for f in input_lstm:
-            score_t = O*(self.activation(H2*self.activation(H1 * f))) if H2!=None else O * (self.activation(H1 * f)) if self.pH1!=None  else O*f
+            score_t = O*(self.activation(H2*self.activation(H1 * f))) if H2!=None else O * (self.activation(H1 * f)) if self.H1 != None  else O * f
             scores.append(score_t)
         return scores,pos_probs
 
@@ -212,8 +222,8 @@ class Tagger:
         # Return best path and best path's score
         return best_path, path_score
 
-    def neg_log_loss(self, sent_words, words, labels, is_chunking):
-        observations = self.build_chunking_graph(sent_words, words, True)[0] if is_chunking else self.build_pos_graph(sent_words, words, True)
+    def neg_log_loss(self, sent_words, words, labels, is_chunking, predicated_pos=None):
+        observations = self.build_chunking_graph(sent_words, words, True,predicated_pos)[0] if is_chunking else self.build_pos_graph(sent_words, words, True)
         gold_score = self.score_sentence(observations, labels, self.transitions if is_chunking else self.tag_transitions, self.vb.w2i if is_chunking else self.vt.w2i)
         forward_score = self.forward(observations, self.nBios if is_chunking else self.ntags, self.transitions if is_chunking else self.tag_transitions, self.vb.w2i if is_chunking else self.vt.w2i)
         return forward_score - gold_score
@@ -222,13 +232,16 @@ class Tagger:
         renew_cg()
         words = [w for w, p, bio in sent]
         ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in sent]
-        observations,tag_scores = self.build_chunking_graph(words, ws, False)
-        bios, score = self.viterbi_decoding(observations,self.transitions,self.vb.w2i, self.nBios)
-        pos_tags, _ = self.viterbi_decoding(tag_scores,self.tag_transitions,self.vt.w2i, self.ntags)
+        pos_tags = None
         if pos_tagger:
-            observations, tag_scores = pos_tagger.build_chunking_graph(words, ws, False)
+            tag_scores = pos_tagger.get_tag_scores(False,words, ws)
             pos_tags, _ = pos_tagger.viterbi_decoding(tag_scores, pos_tagger.tag_transitions, pos_tagger.vt.w2i, pos_tagger.ntags)
-        return [self.vb.i2w[b] for b in bios],[self.vt.i2w[t] for t in pos_tags]
+        observations,tag_scores = self.build_chunking_graph(words, ws, False, pos_tags)
+        bios, score = self.viterbi_decoding(observations,self.transitions,self.vb.w2i, self.nBios)
+        if not pos_tagger:
+            pos_tags, _ = self.viterbi_decoding(tag_scores,self.tag_transitions,self.vt.w2i, self.ntags)
+
+        return [self.vb.i2w[b] for b in bios],[pos_tagger.vt.i2w[t] if pos_tagger else  self.vt.i2w[t] for t in pos_tags]
 
     def train(self):
         tagged, loss = 0,0
@@ -252,9 +265,6 @@ class Tagger:
                 tagged += len(ps)
 
                 if len(batch)>=self.batch:
-                    if not pos_tagger:
-                        print 'loading pos tagger model'
-                        pos_tagger = Tagger(self.options, self.words, self.tags, self.bios, self.characters)
                     if ITER < options.pos_epochs:
                         for j in xrange(len(batch)):
                             ws,ps,_ = batch[j]
@@ -264,9 +274,18 @@ class Tagger:
                         self.trainer.update()
                         renew_cg()
                     else:
+                        if not pos_tagger:
+                            print 'loading pos tagger model'
+                            pos_tagger = Tagger(self.options, self.words, self.tags, self.bios, self.characters)
+                            pos_tagger.load(os.path.join(self.options.output, self.options.model+'.pos'))
+                            print 'validate pos tagger accuracy'
+                            pos_tagger.validate(best_dev, False, pos_tagger)
+                            best_dev = float('-inf')
                         for j in xrange(len(batch)):
                             ws,_,bs = batch[j]
-                            sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  bs, True)
+                            tag_scores = pos_tagger.get_tag_scores(False, words, ws)
+                            pos_tags, _ = pos_tagger.viterbi_decoding(tag_scores, pos_tagger.tag_transitions,pos_tagger.vt.w2i, pos_tagger.ntags)
+                            sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  bs, True, pos_tags)
                             loss += sum_errs.scalar_value()
                         sum_errs.backward()
                         self.trainer.update()
@@ -285,10 +304,19 @@ class Tagger:
         good_pos = bad_pos = 0.0
         if options.save_best and options.dev_file:
             for sent in dev:
-                bio_tags, pos_tags = self.tag_sent(sent, pos_tagger)
-                gold_bois = [b for w, t, b in sent]
+                gold_bios = [b for w, t, b in sent]
                 gold_pos = [t for w, t, b in sent]
-                for go, gp, gu, pp in zip(gold_bois, gold_pos, bio_tags, pos_tags):
+                bio_tags, pos_tags = [None]*len(gold_bios), [None]*len(gold_pos)
+                if pos_tagger:
+                    bio_tags, pos_tags = self.tag_sent(sent, pos_tagger)
+                else:
+                    words = [w for w, p, bio in sent]
+                    ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in sent]
+                    tag_scores = self.get_tag_scores(False, words, ws)
+                    pt, _ = self.viterbi_decoding(tag_scores, self.tag_transitions, self.vt.w2i,self.ntags)
+                    pos_tags = [self.vt.i2w[t] for t in pt]
+
+                for go, gp, gu, pp in zip(gold_bios, gold_pos, bio_tags, pos_tags):
                     if go == gu:
                         good += 1
                     else:
@@ -304,23 +332,24 @@ class Tagger:
                 if res > best_dev:
                     print 'dev accuracy (saving):', res, 'pos accuracy', pos_res
                     best_dev = res
-                    self.save(os.path.join(options.output, options.model))
+                    self.save(os.path.join(self.options.output, self.options.model))
                 else:
                     print 'dev accuracy:', res, 'pos accuracy', pos_res
             else:
-                if res > pos_res:
+                if pos_res > best_dev:
                     print 'pos accuracy (saving)', pos_res
                     best_dev = pos_res
-                    self.save(os.path.join(options.output, options.model+'.pos'))
+                    self.save(os.path.join(self.options.output, self.options.model+'.pos'))
                 else:
                     print 'pos accuracy', pos_res
+        renew_cg()
         return best_dev
 
     def load(self, f):
-        self.chunk_model.load(f)
+        self.model.load(f)
 
     def save(self, f):
-        self.chunk_model.save(f)
+        self.model.save(f)
 
     @staticmethod
     def parse_options():
