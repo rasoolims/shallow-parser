@@ -8,10 +8,6 @@ import util
 class Tagger:
     def __init__(self, options, words, tags, bios, chars):
         self.options = options
-        self.words = words
-        self.tags = tags
-        self.bios = bios
-        self.characters = chars
         self.activations = {'tanh': tanh, 'sigmoid': logistic, 'relu': rectify}
         self.activation = self.activations[options.activation]
         self.vw = util.Vocab.from_corpus([words])
@@ -276,7 +272,9 @@ class Tagger:
                     else:
                         if not pos_tagger:
                             print 'loading pos tagger model'
-                            pos_tagger = Tagger(self.options, self.words, self.tags, self.bios, self.characters)
+                            with open(self.options.params, 'r') as paramsfp:
+                                words, bio_tags, bios, ch, opt = pickle.load(paramsfp)
+                            pos_tagger = Tagger(opt, words, bio_tags, bios, ch)
                             pos_tagger.load(os.path.join(self.options.output, self.options.model+'.pos'))
                             print 'validate pos tagger accuracy'
                             pos_tagger.validate(best_dev, False, pos_tagger)
