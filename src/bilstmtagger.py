@@ -6,17 +6,17 @@ import numpy as np
 import util
 
 class Tagger:
-    def __init__(self, options, words, tags, bios, chars):
+    def __init__(self, options, vw, vt, vb, vc):
         self.options = options
         self.activations = {'tanh': tanh, 'sigmoid': logistic, 'relu': rectify}
         self.activation = self.activations[options.activation]
-        self.vw = util.Vocab.from_corpus([words])
-        self.vb = util.Vocab.from_corpus([bios])
-        self.vt = util.Vocab.from_corpus([tags])
+        self.vw = vw
+        self.vb = vb
+        self.vt = vt
+        self.vc = vc
         self.UNK_W = self.vw.w2i['_UNK_']
         self.batch = options.batch
         self.nwords = self.vw.size()
-        self.chars = util.Vocab.from_corpus([chars])
         self.ntags = self.vt.size()
         self.nBios = self.vb.size()
         print 'num of pos tags',self.ntags, 'num of bio tags',self.nBios
@@ -24,7 +24,7 @@ class Tagger:
         self.trainer = AdamTrainer(self.model)
 
         self.WE = self.model.add_lookup_parameters((self.nwords, options.wembedding_dims))
-        self.CE = self.model.add_lookup_parameters((self.chars.size(), options.cembedding_dims))
+        self.CE = self.model.add_lookup_parameters((self.vc.size(), options.cembedding_dims))
         self.PE = self.model.add_lookup_parameters((self.ntags, options.pembedding_dims))
         self.H1 = self.model.add_parameters((options.hidden_units, options.lstm_dims)) if options.hidden_units > 0 else None
         self.H2 = self.model.add_parameters((options.hidden2_units, options.hidden_units)) if options.hidden2_units > 0 else None
@@ -130,7 +130,7 @@ class Tagger:
         else:
             char_lstms = []
             for w in sent_words:
-                char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if (c in self.chars.w2i and not is_train) or (is_train and random.random() >= 0.001) else self.CE[self.chars.w2i[' ']] for c in ['<s>'] + list(w) + ['</s>']]))
+                char_lstms.append(self.char_lstms.transduce([self.CE[self.vc.w2i[c]] if (c in self.vc.w2i and not is_train) or (is_train and random.random() >= 0.001) else self.CE[self.vc.w2i[' ']] for c in ['<s>'] + list(w) + ['</s>']]))
             wembs = [noise(self.WE[w], 0.1) if is_train else self.WE[w] for w in words]
             evec = [self.extrn_lookup[self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[
                 1] if self.edim > 0 else None for w in words]
@@ -272,9 +272,7 @@ class Tagger:
                     else:
                         if not pos_tagger:
                             print 'loading pos tagger model'
-                            with open(self.options.params, 'r') as paramsfp:
-                                words, bio_tags, bios, ch, opt = pickle.load(paramsfp)
-                            pos_tagger = Tagger(opt, words, bio_tags, bios, ch)
+                            pos_tagger = Tagger(self.options, self.vw, self.vt, self.vb, self.vc)
                             pos_tagger.load(os.path.join(self.options.output, self.options.model+'.pos'))
                             print 'validate pos tagger accuracy'
                             pos_tagger.validate(best_dev, False, pos_tagger)
@@ -398,29 +396,34 @@ if __name__ == '__main__':
         train = list(Tagger.read(options.conll_train))
         print 'load #sent:',len(train)
         words = []
-        bio_tags = []
+        tags = []
         bios = []
         chars = {' ','<s>','</s>'}
         wc = Counter()
         for s in train:
             for w, p, bio in s:
                 words.append(w)
-                bio_tags.append(p)
+                tags.append(p)
                 bios.append(bio)
                 [chars.add(x) for x in list(w)]
                 wc[w] += 1
         words.append('_UNK_')
         bios.append('_START_')
         bios.append('_STOP_')
-        bio_tags.append('_START_')
-        bio_tags.append('_STOP_')
+        tags.append('_START_')
+        tags.append('_STOP_')
         ch = list(chars)
 
         print 'writing params file'
         with open(os.path.join(options.output, options.params), 'w') as paramsfp:
-            pickle.dump((words, bio_tags, bios, ch, options), paramsfp)
+            pickle.dump((words, tags, bios, ch, options), paramsfp)
 
-        Tagger(options, words, bio_tags, bios, ch).train()
+        vw = util.Vocab.from_corpus([words])
+        vb = util.Vocab.from_corpus([bios])
+        vt = util.Vocab.from_corpus([tags])
+        chars = util.Vocab.from_corpus([ch])
+
+        Tagger(options, vw, vt, vb, chars).train()
 
         options.model = os.path.join(options.output,options.model)
         options.params = os.path.join(options.output,options.params)
@@ -429,9 +432,13 @@ if __name__ == '__main__':
         print options.model, options.params, options.eval_format
         print 'reading params'
         with open(options.params, 'r') as paramsfp:
-            words, bio_tags, bios, ch, opt = pickle.load(paramsfp)
-        chunker = Tagger(opt, words, bio_tags, bios, ch)
-        pos_tagger = Tagger(opt, words, bio_tags, bios, ch)
+            words, tags, bios, ch, opt = pickle.load(paramsfp)
+        vw = util.Vocab.from_corpus([words])
+        vb = util.Vocab.from_corpus([bios])
+        vt = util.Vocab.from_corpus([tags])
+        chars = util.Vocab.from_corpus([ch])
+        chunker = Tagger(options, vw, vt, vb, chars)
+        pos_tagger = Tagger(options, vw, vt, vb, chars)
         print 'loading model'
         print options.model
         chunker.load(options.model)
@@ -442,11 +449,11 @@ if __name__ == '__main__':
         writer = codecs.open(options.outfile, 'w')
         for sent in test:
             output = list()
-            bio_tags,pos_tags = chunker.tag_sent(sent, pos_tagger)
+            tags, pos_tags = chunker.tag_sent(sent, pos_tagger)
             if options.eval_format:
-                 [output.append(' '.join([sent[i][0], pos_tags[i], sent[i][2], bio_tags[i]])) for i in xrange(len(bio_tags))]
+                 [output.append(' '.join([sent[i][0], pos_tags[i], sent[i][2], tags[i]])) for i in xrange(len(tags))]
             else:
-                [output.append(' '.join([sent[i][0], pos_tags[i], bio_tags[i]])) for i in xrange(len(bio_tags))]
+                [output.append(' '.join([sent[i][0], pos_tags[i], tags[i]])) for i in xrange(len(tags))]
             writer.write('\n'.join(output))
             writer.write('\n\n')
         print 'done!'
@@ -455,9 +462,13 @@ if __name__ == '__main__':
         print options.model, options.params, options.eval_format
         print 'reading params'
         with open(options.params, 'r') as paramsfp:
-            words, bio_tags, bios, ch, opt = pickle.load(paramsfp)
-        chunker = Tagger(opt, words, bio_tags, bios, ch)
-        pos_tagger = Tagger(opt, words, bio_tags, bios, ch)
+            words, tags, bios, ch, opt = pickle.load(paramsfp)
+        vw = util.Vocab.from_corpus([words])
+        vb = util.Vocab.from_corpus([bios])
+        vt = util.Vocab.from_corpus([tags])
+        chars = util.Vocab.from_corpus([ch])
+        chunker = Tagger(options, vw, vt, vb, chars)
+        pos_tagger = Tagger(options, vw, vt, vb, chars)
         print 'loading model'
         print options.model
         chunker.load(options.model)
@@ -471,11 +482,11 @@ if __name__ == '__main__':
             writer = codecs.open(input+options.ext, 'w')
             for sent in test:
                 output = list()
-                bio_tags,pos_tags = chunker.tag_sent(sent, pos_tagger)
+                tags, pos_tags = chunker.tag_sent(sent, pos_tagger)
                 if options.eval_format:
-                     [output.append(' '.join([sent[i][0], pos_tags[i][1], sent[i][2], bio_tags[i]])) for i in xrange(len(bio_tags))]
+                     [output.append(' '.join([sent[i][0], pos_tags[i][1], sent[i][2], tags[i]])) for i in xrange(len(tags))]
                 else:
-                    [output.append(' '.join([sent[i][0], pos_tags[i][1], bio_tags[i]])) for i in xrange(len(bio_tags))]
+                    [output.append(' '.join([sent[i][0], pos_tags[i][1], tags[i]])) for i in xrange(len(tags))]
                 writer.write('\n'.join(output))
                 writer.write('\n\n')
         print 'done!'
