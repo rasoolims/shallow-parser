@@ -122,11 +122,11 @@ class Tagger:
         input_lstm = self.get_lstm_features(is_train, sent_words, words)
 
         O = parameter(self.tagO)
-        probs = []
+        scores = []
         for f in input_lstm:
             score_t = O*f
-            probs.append(score_t)
-        return probs
+            scores.append(score_t)
+        return scores
 
     def get_lstm_features(self, is_train, sent_words, words):
         char_lstms = []

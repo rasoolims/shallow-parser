@@ -41,7 +41,7 @@ class Chunker(Tagger):
         if sent: yield  sent
 
     def build_pos_graph(self, sent_words, words, is_train):
-        input_lstm = self.get_lstm_features(is_train, sent_words, words, False)[0]
+        input_lstm = self.get_lstm_features(is_train, sent_words, words, False)
 
         O = parameter(self.tagO)
         probs = []
@@ -60,7 +60,7 @@ class Chunker(Tagger):
                 tag_scores.append(score_t)
             inputs = [concatenate(filter(None, [wembs[i], evec[i], char_lstms[i][-1], softmax(tag_scores[i])])) for i in xrange(len(words))]
             input_lstm = self.chunk_lstms.transduce(inputs)
-            return input_lstm,tag_scores
+            return input_lstm
         else:
             char_lstms = []
             for w in sent_words:
@@ -82,8 +82,8 @@ class Chunker(Tagger):
             errs.append(err)
         return errs
 
-    def build_tagging_graph(self, sent_words, words, is_train):
-        input_lstm,pos_probs = self.get_lstm_features(is_train, sent_words, words, True)
+    def build_graph(self, sent_words, words, is_train):
+        input_lstm = self.get_lstm_features(is_train, sent_words, words, True)
         H1 = parameter(self.H1) if self.H1 != None else None
         H2 = parameter(self.H2) if self.H2 != None else None
         O = parameter(self.O)
@@ -92,22 +92,24 @@ class Chunker(Tagger):
         for f in input_lstm:
             score_t = O*(self.activation(H2*self.activation(H1 * f))) if H2!=None else O * (self.activation(H1 * f)) if self.H1 != None  else O * f
             scores.append(score_t)
-        return scores,pos_probs
+        return scores
 
-    def neg_log_loss(self, sent_words, words, labels, is_chunking):
-        observations = self.build_tagging_graph(sent_words, words, True)[0] if is_chunking else self.build_pos_graph(sent_words, words, True)
-        gold_score = self.score_sentence(observations, labels, self.transitions if is_chunking else self.tag_transitions, self.vb.w2i if is_chunking else self.vt.w2i)
-        forward_score = self.forward(observations, self.nBios if is_chunking else self.ntags, self.transitions if is_chunking else self.tag_transitions, self.vb.w2i if is_chunking else self.vt.w2i)
+    def neg_log_loss(self, sent_words, words, labels):
+        observations = self.build_graph(sent_words, words, True)
+        gold_score = self.score_sentence(observations, labels, self.transitions, self.vb.w2i)
+        forward_score = self.forward(observations, self.nBios, self.transitions, self.vb.w2i)
         return forward_score - gold_score
 
     def tag_sent(self, sent):
         renew_cg()
         words = [w for w, p, bio in sent]
         ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in sent]
-        observations,tag_scores = self.build_tagging_graph(words, ws, False)
+        p_ws = [self.pos_tagger.vw.w2i.get(w, self.pos_tagger.UNK_W) for w, p, bio in sent]
+        observations = self.build_graph(words, ws, False)
         bios, score = self.viterbi_decoding(observations,self.transitions,self.vb.w2i, self.nBios)
-        pos_tags, _ = self.viterbi_decoding(tag_scores,self.tag_transitions,self.vt.w2i, self.ntags)
-        return [self.vb.i2w[b] for b in bios],[self.vt.i2w[t] for t in pos_tags]
+        tag_scores = self.pos_tagger.build_graph(words, p_ws, False)
+        pos_tags, _ = self.pos_tagger.viterbi_decoding(tag_scores,self.pos_tagger.tag_transitions,self.pos_tagger.vt.w2i, self.pos_tagger.ntags)
+        return [self.vb.i2w[b] for b in bios],[self.pos_tagger.vt.i2w[t] for t in pos_tags]
 
     def train(self):
         tagged, loss = 0,0
@@ -132,7 +134,7 @@ class Chunker(Tagger):
                 if len(batch)>=self.batch:
                     for j in xrange(len(batch)):
                         ws,_,bs = batch[j]
-                        sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  bs, True)
+                        sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  bs)
                         loss += sum_errs.scalar_value()
                     sum_errs.backward()
                     self.trainer.update()
