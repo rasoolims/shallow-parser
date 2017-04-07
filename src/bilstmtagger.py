@@ -122,7 +122,7 @@ class Chunker(Tagger):
                     print loss / tagged
                     loss = 0
                     tagged = 0
-                    best_dev = self.validate(best_dev, ITER>=options.pos_epochs)
+                    best_dev = self.validate(best_dev)
                 ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in s]
                 ps = [self.vt.w2i[t] for w, t, bio in s]
                 bs = [self.vb.w2i[bio] for w, p, bio in s]
@@ -140,12 +140,12 @@ class Chunker(Tagger):
                     batch = []
             self.trainer.status()
             print loss / tagged
-            best_dev = self.validate(best_dev, ITER>=options.pos_epochs)
+            best_dev = self.validate(best_dev)
         if not options.save_best or not options.dev_file:
             print 'Saving the final model'
             self.save(os.path.join(options.output, options.model))
 
-    def validate(self, best_dev, save=True):
+    def validate(self, best_dev):
         dev = list(self.read(options.dev_file))
         good = bad = 0.0
         good_pos = bad_pos = 0.0
@@ -166,15 +166,12 @@ class Chunker(Tagger):
                         bad_pos += 1
             res = good / (good + bad)
             pos_res = good_pos / (good_pos + bad_pos)
-            if save:
-                if res > best_dev:
-                    print 'dev accuracy (saving):', res, 'pos accuracy', pos_res
-                    best_dev = res
-                    self.save(os.path.join(options.output, options.model))
-                else:
-                    print 'dev accuracy:', res, 'pos accuracy', pos_res
+            if res > best_dev:
+                print 'dev accuracy (saving):', res, 'pos accuracy', pos_res
+                best_dev = res
+                self.save(os.path.join(options.output, options.model))
             else:
-                print 'dev pos accuracy', pos_res
+                print 'dev accuracy:', res, 'pos accuracy', pos_res
         return best_dev
 
 
