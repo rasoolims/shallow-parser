@@ -273,7 +273,7 @@ class Tagger:
                         bad_pos += 1
             res = good_pos / (good_pos + bad_pos)
             if res > best_dev:
-                print 'dev accuracy (saving):', res, 'pos accuracy', res
+                print 'dev accuracy (saving):', res
                 best_dev = res
                 self.save(os.path.join(options.output, options.model))
             else:
