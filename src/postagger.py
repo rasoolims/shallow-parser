@@ -2,6 +2,7 @@ from collections import Counter
 import random,os,codecs,pickle,time
 from optparse import OptionParser
 import numpy as np
+
 import util
 
 def parse_options():
@@ -11,18 +12,16 @@ def parse_options():
     parser.add_option('--test', dest='conll_test', help='Annotated CONLL test file', metavar='FILE', default='')
     parser.add_option('--inputs', dest='inputs', help='Input tagged files separated by ,', metavar='FILE', default=None)
     parser.add_option('--ext', dest='ext', help='File extension for outputfiles', type='str', default='.chunk')
-    parser.add_option('--params', dest='params', help='Parameters file', metavar='FILE', default='chunk.params')
-    parser.add_option('--pos_params', dest='pos_params', default='pos.params')
+    parser.add_option('--params', dest='params', help='Parameters file', metavar='FILE', default='params.pickle')
     parser.add_option('--extrn', dest='external_embedding', help='External embeddings', metavar='FILE')
     parser.add_option('--init', dest='initial_embeddings', help='Initial embeddings', metavar='FILE')
-    parser.add_option('--model', dest='model', help='Load/Save model file', metavar='FILE', default='chunk.model')
-    parser.add_option('--pos_model', dest='pos_model',default='pos.model')
+    parser.add_option('--model', dest='model', help='Load/Save model file', metavar='FILE', default='model.model')
     parser.add_option('--wembedding', type='int', dest='wembedding_dims', default=128)
     parser.add_option('--cembedding', type='int', dest='cembedding_dims', help='size of character embeddings',
                       default=30)
     parser.add_option('--pembedding', type='int', dest='pembedding_dims', default=30)
-    parser.add_option('--epochs', type='int', dest='epochs', default=10)
-    parser.add_option('--pos_epochs', type='int', dest='pos_epochs', default=3)
+    parser.add_option('--epochs', type='int', dest='epochs', default=5)
+    parser.add_option('--pos_epochs', type='int', dest='pos_epochs', default=2)
     parser.add_option('--hidden', type='int', dest='hidden_units', default=200)
     parser.add_option('--hidden2', type='int', dest='hidden2_units', default=0)
     parser.add_option('--lstmdims', type='int', dest='lstm_dims', default=200)
@@ -35,7 +34,6 @@ def parse_options():
     parser.add_option("--drop", action="store_true", dest="drop", default=False, help='Use dropout.')
     parser.add_option("--gru", action="store_true", dest="gru", default=False, help='Use GRU instead of LSTM.')
     parser.add_option("--save_best", action="store_true", dest="save_best", default=False, help='Store the best model.')
-    parser.add_option("--train_pos", action="store_true", dest="train_pos", default=False, help='Train pos tagger before chunking.')
     parser.add_option("--dropout", type="float", dest="dropout", default=0.33, help='Dropout probability.')
     parser.add_option('--mem', type='int', dest='mem', default=2048)
     parser.add_option('--k', type='int', dest='k', help='word LSTM depth', default=1)
@@ -51,24 +49,33 @@ dyparams.init()
 from dynet import *
 
 class Tagger:
-    def __init__(self, options, vw, vt, vc):
+    def __init__(self, options, words, tags, bios, chars):
         self.options = options
-        self.vw = vw
-        self.vt = vt
-        self.vc = vc
+        self.activations = {'tanh': tanh, 'sigmoid': logistic, 'relu': rectify}
+        self.activation = self.activations[options.activation]
+        self.vw = util.Vocab.from_corpus([words])
+        self.vb = util.Vocab.from_corpus([bios])
+        self.vt = util.Vocab.from_corpus([tags])
         self.UNK_W = self.vw.w2i['_UNK_']
         self.batch = options.batch
         self.nwords = self.vw.size()
+        self.chars = util.Vocab.from_corpus([chars])
         self.ntags = self.vt.size()
-        print 'num of pos tags',self.ntags
+        self.nBios = self.vb.size()
+        print 'num of pos tags',self.ntags, 'num of bio tags',self.nBios
         self.model = Model()
         self.trainer = AdamTrainer(self.model)
 
         self.WE = self.model.add_lookup_parameters((self.nwords, options.wembedding_dims))
-        self.CE = self.model.add_lookup_parameters((self.vc.size(), options.cembedding_dims))
+        self.CE = self.model.add_lookup_parameters((self.chars.size(), options.cembedding_dims))
+        self.pH1 = self.model.add_parameters((options.hidden_units, options.lstm_dims)) if options.hidden_units > 0 else None
+        self.pH2 = self.model.add_parameters((options.hidden2_units, options.hidden_units)) if options.hidden2_units > 0 else None
+        hdim = options.hidden2_units if options.hidden2_units>0 else options.hidden_units if options.hidden_units>0 else options.lstm_dims
+        self.pO = self.model.add_parameters((self.nBios, hdim))
         self.k = options.k
         self.drop = options.drop
         self.dropout = options.dropout
+        self.transitions = self.model.add_lookup_parameters((self.nBios, self.nBios))
         self.tag_transitions = self.model.add_lookup_parameters((self.ntags, self.ntags))
         self.edim = 0
         self.external_embedding = None
@@ -82,50 +89,57 @@ class Tagger:
                if word in initial_embeddings_vec:
                    assert options.wembedding_dims == len(initial_embeddings_vec[word])
                    self.WE.init_row(self.vw.w2i.get(word), initial_embeddings_vec[word])
-            initial_embeddings_vec = None
         if options.external_embedding is not None:
             external_embedding_fp = open(options.external_embedding, 'r')
             external_embedding_fp.readline()
-            external_embedding = {line.split(' ')[0]: [float(f) for f in line.strip().split(' ')[1:]] for line in
+            self.external_embedding = {line.split(' ')[0]: [float(f) for f in line.strip().split(' ')[1:]] for line in
                                        external_embedding_fp}
             external_embedding_fp.close()
-            self.edim = len(external_embedding.values()[0])
+            self.edim = len(self.external_embedding.values()[0])
             noextrn = [0.0 for _ in xrange(self.edim)]
-            self.extrnd = {word: i + 3 for i, word in enumerate(external_embedding)}
-            self.extrn_lookup = self.model.add_lookup_parameters((len(external_embedding) + 3, self.edim))
+            self.extrnd = {word: i + 3 for i, word in enumerate(self.external_embedding)}
+            self.extrn_lookup = self.model.add_lookup_parameters((len(self.external_embedding) + 3, self.edim))
             self.extrn_lookup.set_updated(False)
             for word, i in self.extrnd.iteritems():
-                self.extrn_lookup.init_row(i, external_embedding[word])
+                self.extrn_lookup.init_row(i, self.external_embedding[word])
             self.extrnd['_UNK_'] = 1
             self.extrnd['_START_'] = 2
             self.extrn_lookup.init_row(1, noextrn)
             print 'Loaded external embedding. Vector dimensions:', self.edim
-            external_embedding = None
 
         tag_inp_dim = options.wembedding_dims + self.edim + options.clstm_dims
+        inp_dim = tag_inp_dim + self.ntags
+        self.chunk_lstms = BiRNNBuilder(self.k, inp_dim, options.lstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
         self.tag_lstms = BiRNNBuilder(self.k, tag_inp_dim, options.tag_lstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
         self.char_lstms = BiRNNBuilder(1, options.cembedding_dims, options.clstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
         self.tagO = self.model.add_parameters((self.ntags, options.tag_lstm_dims))
 
     @staticmethod
     def read(fname):
+        sent = []
+        for line in file(fname):
+            line = line.strip().split()
+            if not line:
+                if sent: yield sent
+                sent = []
+            else:
+                w, p, bio = line
+                sent.append((w, p, bio))
+        if sent: yield  sent
+
+    @staticmethod
+    def read_tagged_file(fname):
         for line in file(fname):
             spl = line.strip().split()
             sent = []
             for s in spl:
                 w = s[:s.rfind('_')]
                 p = s[s.rfind('_')+1:]
-                sent.append((w,p))
+                sent.append((w,p,'_'))
             yield sent
 
-    @staticmethod
-    def read_raw_file(fname):
-        for line in file(fname):
-            sent = line.strip().split()
-            yield sent
-
-    def build_graph(self, sent_words, words, is_train):
-        input_lstm = self.get_lstm_features(is_train, sent_words, words)
+    def build_pos_graph(self, sent_words, words, is_train):
+        input_lstm = self.get_lstm_features(is_train, sent_words, words, False)[0]
 
         O = parameter(self.tagO)
         probs = []
@@ -134,26 +148,49 @@ class Tagger:
             probs.append(score_t)
         return probs
 
-    def get_tag_scores(self,is_train, sent_words, words):
-        tag_lstm = self.get_lstm_features(is_train, sent_words, words)
-        O = parameter(self.tagO)
-        tag_scores = []
-        for f in tag_lstm:
-            score_t = O * f
-            tag_scores.append(score_t)
-        return tag_scores
+    def get_lstm_features(self, is_train, sent_words, words, is_chunking):
+        if is_chunking:
+            tag_lstm, char_lstms, wembs, evec = self.get_lstm_features(is_train, sent_words, words, False)
+            O = parameter(self.tagO)
+            tag_scores = []
+            for f in tag_lstm:
+                score_t = O * f
+                tag_scores.append(score_t)
+            inputs = [concatenate(filter(None, [wembs[i], evec[i], char_lstms[i][-1], softmax(tag_scores[i])])) for i in xrange(len(words))]
+            input_lstm = self.chunk_lstms.transduce(inputs)
+            return input_lstm,tag_scores
+        else:
+            char_lstms = []
+            for w in sent_words:
+                char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if (c in self.chars.w2i and not is_train) or (is_train and random.random() >= 0.001) else self.CE[self.chars.w2i[' ']] for c in ['<s>'] + list(w) + ['</s>']]))
+            wembs = [noise(self.WE[w], 0.1) if is_train else self.WE[w] for w in words]
+            evec = [self.extrn_lookup[self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[
+                1] if self.edim > 0 else None for w in words]
+            inputs = [concatenate(filter(None, [wembs[i], evec[i], char_lstms[i][-1]])) for i in xrange(len(words))]
+            if self.drop:
+                [dropout(inputs[i], self.dropout) for i in xrange(len(inputs))]
+            input_lstm = self.tag_lstms.transduce(inputs)
+            return input_lstm, char_lstms, wembs, evec
 
-    def get_lstm_features(self, is_train, sent_words, words):
-        char_lstms = []
-        for w in sent_words:
-            char_lstms.append(self.char_lstms.transduce([self.CE[self.vc.w2i[c]] if (c in self.vc.w2i and not is_train) or (is_train and random.random() >= 0.001) else self.CE[self.vc.w2i[' ']] for c in ['<s>'] + list(w) + ['</s>']]))
-        wembs = [noise(self.WE[w], 0.1) if is_train else self.WE[w] for w in words]
-        evec = [self.extrn_lookup[self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[1] if self.edim > 0 else None for w in words]
-        inputs = [concatenate(filter(None, [wembs[i], evec[i], char_lstms[i][-1]])) for i in xrange(len(words))]
-        if self.drop:
-            [dropout(inputs[i], self.dropout) for i in xrange(len(inputs))]
-        input_lstm = self.tag_lstms.transduce(inputs)
-        return input_lstm
+    def pos_loss(self, sent_words, words, tags):
+        probs = self.build_pos_graph(sent_words, words, True)
+        errs = []
+        for i in xrange(len(tags)):
+            err = -log(pick(probs[i], tags[i]))
+            errs.append(err)
+        return errs
+
+    def build_tagging_graph(self, sent_words, words, is_train):
+        input_lstm,pos_probs = self.get_lstm_features(is_train, sent_words, words, True)
+        H1 = parameter(self.pH1) if self.pH1!=None else None
+        H2 = parameter(self.pH2) if self.pH2!=None else None
+        O = parameter(self.pO)
+        scores = []
+
+        for f in input_lstm:
+            score_t = O*(self.activation(H2*self.activation(H1 * f))) if H2!=None else O * (self.activation(H1 * f)) if self.pH1!=None  else O*f
+            scores.append(score_t)
+        return scores,pos_probs
 
     def score_sentence(self, observations, labels, trans_matrix, dct):
         assert len(observations) == len(labels)
@@ -221,80 +258,106 @@ class Tagger:
         # Return best path and best path's score
         return best_path, path_score
 
-    def neg_log_loss(self, sent_words, words, labels):
-        observations = self.build_graph(sent_words, words, True)
-        gold_score = self.score_sentence(observations, labels, self.tag_transitions, self.vt.w2i)
-        forward_score = self.forward(observations, self.ntags, self.tag_transitions,self.vt.w2i)
+    def neg_log_loss(self, sent_words, words, labels, is_chunking):
+        observations = self.build_tagging_graph(sent_words, words, True)[0] if is_chunking else self.build_pos_graph(sent_words, words, True)
+        gold_score = self.score_sentence(observations, labels, self.transitions if is_chunking else self.tag_transitions, self.vb.w2i if is_chunking else self.vt.w2i)
+        forward_score = self.forward(observations, self.nBios if is_chunking else self.ntags, self.transitions if is_chunking else self.tag_transitions, self.vb.w2i if is_chunking else self.vt.w2i)
         return forward_score - gold_score
+
+    def viterbi_loss(self,  sent_words,words,tags, bios):
+        observations = self.build_tagging_graph(sent_words,words,tags, True)[0]
+        viterbi_tags, viterbi_score = self.viterbi_decoding(observations,self.transitions,self.vb.w2i, self.nBios)
+        if viterbi_tags != bios:
+            gold_score = self.score_sentence(observations, bios, self.transitions, self.vb.w2i)
+            return (viterbi_score - gold_score), viterbi_tags
+        else:
+            return dy.scalarInput(0), viterbi_tags
+
 
     def tag_sent(self, sent):
         renew_cg()
-        words = [w for w, p in sent]
-        ws = [self.vw.w2i.get(w, self.UNK_W) for w, p in sent]
-        tag_scores = self.get_tag_scores(False, words, ws)
-        pos_tags, _ = self.viterbi_decoding(tag_scores, self.tag_transitions, self.vt.w2i,self.ntags)
+        words = [w for w, p, bio in sent]
+        ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in sent]
+        observations,tag_scores = self.build_tagging_graph(words, ws, False)
+        bios, score = self.viterbi_decoding(observations,self.transitions,self.vb.w2i, self.nBios)
+        pos_tags, _ = self.viterbi_decoding(tag_scores,self.tag_transitions,self.vt.w2i, self.ntags)
+        return [self.vb.i2w[b] for b in bios],[self.vt.i2w[t] for t in pos_tags]
 
-        return [self.vt.i2w[t] for t in pos_tags]
-
-    def train(self, train_data, dev_data, epochs, model_file):
+    def train(self):
         tagged, loss = 0,0
         best_dev = float('-inf')
-        for ITER in xrange(epochs):
+        for ITER in xrange(self.options.epochs):
             print 'ITER', ITER
-            random.shuffle(train_data)
+            random.shuffle(train)
             batch = []
-            for i, s in enumerate(train_data, 1):
+            for i, s in enumerate(train, 1):
                 if i % 1000 == 0:
                     self.trainer.status()
                     print loss / tagged
                     loss = 0
                     tagged = 0
-                    best_dev = self.validate(dev_data, best_dev, model_file)
-                ws = [self.vw.w2i.get(w, self.UNK_W) for w, p in s]
-                ps = [self.vt.w2i[t] for w, t in s]
-                batch.append((ws,ps))
+                    best_dev = self.validate(best_dev, ITER>=options.pos_epochs)
+                ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in s]
+                ps = [self.vt.w2i[t] for w, t, bio in s]
+                bs = [self.vb.w2i[bio] for w, p, bio in s]
+                batch.append((ws,ps,bs))
                 tagged += len(ps)
 
                 if len(batch)>=self.batch:
-                    for j in xrange(len(batch)):
-                        ws,ps = batch[j]
-                        sum_errs = self.neg_log_loss([w for w,_ in s], ws,  ps)
-                        loss+= sum_errs.scalar_value()
-                    sum_errs.backward()
-                    self.trainer.update()
-                    renew_cg()
+                    if ITER < options.pos_epochs:
+                        for j in xrange(len(batch)):
+                            ws,ps,_ = batch[j]
+                            sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  ps, False)
+                            loss+= sum_errs.scalar_value()
+                        sum_errs.backward()
+                        self.trainer.update()
+                        renew_cg()
+                    else:
+                        for j in xrange(len(batch)):
+                            ws,_,bs = batch[j]
+                            sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  bs, True)
+                            loss += sum_errs.scalar_value()
+                        sum_errs.backward()
+                        self.trainer.update()
+                        renew_cg()
                     batch = []
             self.trainer.status()
             print loss / tagged
-            if dev_data: best_dev = self.validate(dev_data, best_dev, model_file)
-        if not self.options.save_best:
+            best_dev = self.validate(best_dev, ITER>=options.pos_epochs)
+        if not options.save_best or not options.dev_file:
             print 'Saving the final model'
             self.save(os.path.join(options.output, options.model))
 
-    def validate(self, dev_data, best_dev, model_file):
+    def validate(self, best_dev, save=True):
+        dev = list(self.read(options.dev_file))
+        good = bad = 0.0
         good_pos = bad_pos = 0.0
-        for sent in dev_data:
-            gold_pos = [t for w, t in sent]
-            words = [w for w, p in sent]
-            ws = [self.vw.w2i.get(w, self.UNK_W) for w, p in sent]
-            tag_scores = self.get_tag_scores(False, words, ws)
-            pt, _ = self.viterbi_decoding(tag_scores, self.tag_transitions, self.vt.w2i,self.ntags)
-            pos_tags = [self.vt.i2w[t] for t in pt]
+        if options.save_best and options.dev_file:
+            for sent in dev:
+                bio_tags, pos_tags = self.tag_sent(sent)
+                gold_bois = [b for w, t, b in sent]
+                gold_pos = [t for w, t, b in sent]
+                for go, gp, gu, pp in zip(gold_bois, gold_pos, bio_tags, pos_tags):
+                    if go == gu:
+                        good += 1
+                    else:
+                        bad += 1
 
-            for gp, pp in zip(gold_pos, pos_tags):
-                if gp == pp:
-                    good_pos += 1
+                    if gp == pp:
+                        good_pos += 1
+                    else:
+                        bad_pos += 1
+            res = good / (good + bad)
+            pos_res = good_pos / (good_pos + bad_pos)
+            if save:
+                if res > best_dev:
+                    print 'dev accuracy (saving):', res, 'pos accuracy', pos_res
+                    best_dev = res
+                    self.save(os.path.join(options.output, options.model))
                 else:
-                    bad_pos += 1
-        pos_res = good_pos / (good_pos + bad_pos)
-
-        if pos_res > best_dev:
-            print 'pos accuracy (saving)', pos_res
-            best_dev = pos_res
-            self.save(model_file)
-        else:
-            print 'pos accuracy', pos_res
-        renew_cg()
+                    print 'dev accuracy:', res, 'pos accuracy', pos_res
+            else:
+                print 'dev pos accuracy', pos_res
         return best_dev
 
     def load(self, f):
@@ -306,33 +369,32 @@ class Tagger:
 if __name__ == '__main__':
     if options.conll_train != '' and options.output != '':
         if not os.path.isdir(options.output): os.mkdir(options.output)
-        train_data = list(Tagger.read(options.conll_train))
-        dev_data = list(Tagger.read(options.dev_file))
-        print 'load #sent:',len(train_data)
+        train = list(Tagger.read(options.conll_train))
+        print 'load #sent:',len(train)
         words = []
-        tags = []
+        bio_tags = []
+        bios = []
         chars = {' ','<s>','</s>'}
         wc = Counter()
-        for s in train_data:
-            for w, p in s:
+        for s in train:
+            for w, p, bio in s:
                 words.append(w)
-                tags.append(p)
+                bio_tags.append(p)
+                bios.append(bio)
                 [chars.add(x) for x in list(w)]
                 wc[w] += 1
         words.append('_UNK_')
-        tags.append('_START_')
-        tags.append('_STOP_')
+        bios.append('_START_')
+        bios.append('_STOP_')
+        bio_tags.append('_START_')
+        bio_tags.append('_STOP_')
         ch = list(chars)
 
         print 'writing params file'
         with open(os.path.join(options.output, options.params), 'w') as paramsfp:
-            pickle.dump((words, tags, ch, options), paramsfp)
+            pickle.dump((words, bio_tags, bios, ch, options), paramsfp)
 
-        vw = util.Vocab.from_corpus([words])
-        vt = util.Vocab.from_corpus([tags])
-        chars = util.Vocab.from_corpus([ch])
-
-        Tagger(options, vw, vt, chars).train(train_data,dev_data, options.epochs, os.path.join(options.output, options.model))
+        Tagger(options, words, bio_tags, bios, ch).train()
 
         options.model = os.path.join(options.output,options.model)
         options.params = os.path.join(options.output,options.params)
@@ -341,25 +403,23 @@ if __name__ == '__main__':
         print options.model, options.params, options.eval_format
         print 'reading params'
         with open(options.params, 'r') as paramsfp:
-            words, tags, ch, opt = pickle.load(paramsfp)
-        vw = util.Vocab.from_corpus([words])
-        vt = util.Vocab.from_corpus([tags])
-        chars = util.Vocab.from_corpus([ch])
-        pos_tagger = Tagger(options, vw, vt, chars)
+            words, bio_tags, bios, ch, opt = pickle.load(paramsfp)
+        tagger = Tagger(opt, words, bio_tags, bios, ch)
+
         print 'loading model'
         print options.model
-        pos_tagger.load(options.model)
+        tagger.load(options.model)
 
         test = list(Tagger.read(options.conll_test))
         print 'loaded',len(test),'sentences!'
         writer = codecs.open(options.outfile, 'w')
         for sent in test:
             output = list()
-            tags, pos_tags = pos_tagger.tag_sent(sent, pos_tagger)
+            bio_tags,pos_tags = tagger.tag_sent(sent)
             if options.eval_format:
-                 [output.append('_'.join([sent[i][0], pos_tags[i], sent[i][2], tags[i]])) for i in xrange(len(tags))]
+                 [output.append(' '.join([sent[i][0], pos_tags[i], sent[i][2], bio_tags[i]])) for i in xrange(len(bio_tags))]
             else:
-                [output.append(' '.join([sent[i][0], pos_tags[i], tags[i]])) for i in xrange(len(tags))]
+                [output.append(' '.join([sent[i][0], pos_tags[i], bio_tags[i]])) for i in xrange(len(bio_tags))]
             writer.write('\n'.join(output))
             writer.write('\n\n')
         print 'done!'
@@ -368,24 +428,25 @@ if __name__ == '__main__':
         print options.model, options.params, options.eval_format
         print 'reading params'
         with open(options.params, 'r') as paramsfp:
-            words, tags, ch, opt = pickle.load(paramsfp)
-        vw = util.Vocab.from_corpus([words])
-        vt = util.Vocab.from_corpus([tags])
-        chars = util.Vocab.from_corpus([ch])
-        pos_tagger = Tagger(options, vw, vt, chars)
+            words, bio_tags, bios, ch, opt = pickle.load(paramsfp)
+        tagger = Tagger(opt, words, bio_tags, bios, ch)
         print 'loading model'
         print options.model
-        pos_tagger.load(options.model)
+        tagger.load(options.model)
 
         inputs = options.inputs.strip().split(',')
         for input in inputs:
             print input
-            test = list(Tagger.read_raw_file(input))
+            test = list(Tagger.read_tagged_file(input))
             print 'loaded',len(test),'sentences!'
             writer = codecs.open(input+options.ext, 'w')
             for sent in test:
                 output = list()
-                tags, pos_tags = pos_tagger.tag_sent(sent)
-                [output.append(sent[i]  + '_'+ pos_tags[i]) for i in xrange(len(tags))]
-                writer.write(' '.join(output)+'\n')
+                bio_tags,pos_tags = tagger.tag_sent(sent)
+                if options.eval_format:
+                     [output.append(' '.join([sent[i][0], pos_tags[i][1], sent[i][2], bio_tags[i]])) for i in xrange(len(bio_tags))]
+                else:
+                    [output.append(' '.join([sent[i][0], pos_tags[i][1], bio_tags[i]])) for i in xrange(len(bio_tags))]
+                writer.write('\n'.join(output))
+                writer.write('\n\n')
         print 'done!'
