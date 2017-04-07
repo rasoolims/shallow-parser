@@ -70,7 +70,6 @@ class Tagger:
         self.dropout = options.dropout
         self.tag_transitions = self.model.add_lookup_parameters((self.ntags, self.ntags))
         self.edim = 0
-        self.external_embedding = None
         if options.initial_embeddings is not None:
             initial_embeddings_fp = open(options.initial_embeddings, 'r')
             initial_embeddings_fp.readline()
@@ -84,16 +83,16 @@ class Tagger:
         if options.external_embedding is not None:
             external_embedding_fp = open(options.external_embedding, 'r')
             external_embedding_fp.readline()
-            self.external_embedding = {line.split(' ')[0]: [float(f) for f in line.strip().split(' ')[1:]] for line in
+            external_embedding = {line.split(' ')[0]: [float(f) for f in line.strip().split(' ')[1:]] for line in
                                        external_embedding_fp}
             external_embedding_fp.close()
-            self.edim = len(self.external_embedding.values()[0])
+            self.edim = len(external_embedding.values()[0])
             noextrn = [0.0 for _ in xrange(self.edim)]
-            self.extrnd = {word: i + 3 for i, word in enumerate(self.external_embedding)}
-            self.extrn_lookup = self.model.add_lookup_parameters((len(self.external_embedding) + 3, self.edim))
+            self.extrnd = {word: i + 3 for i, word in enumerate(external_embedding)}
+            self.extrn_lookup = self.model.add_lookup_parameters((len(external_embedding) + 3, self.edim))
             self.extrn_lookup.set_updated(False)
             for word, i in self.extrnd.iteritems():
-                self.extrn_lookup.init_row(i, self.external_embedding[word])
+                self.extrn_lookup.init_row(i, external_embedding[word])
             self.extrnd['_UNK_'] = 1
             self.extrnd['_START_'] = 2
             self.extrn_lookup.init_row(1, noextrn)
