@@ -8,8 +8,9 @@ dyparams.init()
 from dynet import *
 
 class Chunker(Tagger):
-    def __init__(self, options, vw, vt, vc, vb):
+    def __init__(self, options, vw, vt, vc, vb, pos_tagger):
         Tagger.__init__(self,options,vw,vt,vc)
+        self.pos_tagger = pos_tagger
         self.activations = {'tanh': tanh, 'sigmoid': logistic, 'relu': rectify}
         self.activation = self.activations[options.activation]
         self.vb = vb
@@ -37,16 +38,6 @@ class Chunker(Tagger):
                 w, p, bio = line
                 sent.append((w, p, bio))
         if sent: yield  sent
-
-    def build_graph(self, sent_words, words, is_train):
-        input_lstm = self.get_lstm_features(is_train, sent_words, words, False)[0]
-
-        O = parameter(self.tagO)
-        probs = []
-        for f in input_lstm:
-            score_t = O*f
-            probs.append(score_t)
-        return probs
 
     def get_lstm_features(self, is_train, sent_words, words, is_chunking, predicated_pos = None):
         if is_chunking:
@@ -82,35 +73,29 @@ class Chunker(Tagger):
         for f in input_lstm:
             score_t = O*(self.activation(H2*self.activation(H1 * f))) if H2!=None else O * (self.activation(H1 * f)) if self.H1 != None  else O * f
             scores.append(score_t)
-        return scores,pos_probs
+        return scores
 
     def neg_log_loss(self, sent_words, words, labels, predicated_pos):
-        observations = self.build_graph(sent_words, words, True, predicated_pos)[0]
+        observations = self.build_graph(sent_words, words, True, predicated_pos)
         gold_score = self.score_sentence(observations, labels, self.transitions, self.vb.w2i)
         forward_score = self.forward(observations, self.nBios, self.transitions, self.vb.w2i)
         return forward_score - gold_score
 
-    def tag_sent(self, sent, pos_tagger):
+    def tag_sent(self, sent):
         renew_cg()
         words = [w for w, p, bio in sent]
         ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in sent]
-        pos_tags = None
-        if pos_tagger:
-            tag_scores = pos_tagger.get_tag_scores(False,words, ws)
-            pos_tags, _ = pos_tagger.viterbi_decoding(tag_scores, pos_tagger.tag_transitions, pos_tagger.vt.w2i, pos_tagger.ntags)
-        observations,tag_scores = self.build_graph(words, ws, False, pos_tags)
+        tag_scores = self.pos_tagger.get_tag_scores(False,words, ws)
+        pos_tags, _ = self.pos_tagger.viterbi_decoding(tag_scores, self.pos_tagger.tag_transitions, self.pos_tagger.vt.w2i, self.pos_tagger.ntags)
+        observations = self.build_graph(words, ws, False, pos_tags)
         bios, score = self.viterbi_decoding(observations,self.transitions,self.vb.w2i, self.nBios)
-        if not pos_tagger:
-            pos_tags, _ = self.viterbi_decoding(tag_scores,self.tag_transitions,self.vt.w2i, self.ntags)
 
         return [self.vb.i2w[b] for b in bios],[pos_tagger.vt.i2w[t] if pos_tagger else  self.vt.i2w[t] for t in pos_tags]
 
     def train(self, train_data):
         tagged, loss = 0,0
         best_dev = float('-inf')
-        print 'train pos tagger started'
-        pos_tagger = self.train_pos_tagger(train_data)
-        print 'train pos tagger finished'
+
         for ITER in xrange(self.options.epochs):
             print 'ITER', ITER
             random.shuffle(train_data)
@@ -121,7 +106,7 @@ class Chunker(Tagger):
                     print loss / tagged
                     loss = 0
                     tagged = 0
-                    best_dev = self.validate(best_dev, pos_tagger)
+                    best_dev = self.validate(best_dev)
                 ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in s]
                 ps = [self.vt.w2i[t] for w, t, bio in s]
                 bs = [self.vb.w2i[bio] for w, p, bio in s]
@@ -141,35 +126,19 @@ class Chunker(Tagger):
                     batch = []
             self.trainer.status()
             print loss / tagged
-            best_dev = self.validate(best_dev, pos_tagger)
+            best_dev = self.validate(best_dev)
         if not options.save_best or not options.dev_file:
             print 'Saving the final model'
             self.save(os.path.join(options.output, options.model))
 
-    def train_pos_tagger(self, train_data):
-        pos_train_data = [[(w,p) for w,p,bio in s] for s in train_data]
-        pos_dev_data = [[(w,p) for w,p,bio in s] for s in  list(self.read(self.options.dev_file))]
-        pos_tagger = Tagger(self.options, self.vw, self.vt, self.vc)
-        pos_tagger.train(pos_train_data, pos_dev_data, self.options.pos_epochs, os.path.join(self.options.output, self.options.model+'.pos'))
-        return pos_tagger
-
-    def validate(self, best_dev, pos_tagger = None):
+    def validate(self, best_dev):
         dev = list(self.read(options.dev_file))
         good = bad = 0.0
         good_pos = bad_pos = 0.0
         for sent in dev:
             gold_bios = [b for w, t, b in sent]
             gold_pos = [t for w, t, b in sent]
-            bio_tags, pos_tags = [None]*len(gold_bios), [None]*len(gold_pos)
-            if pos_tagger:
-                bio_tags, pos_tags = self.tag_sent(sent, pos_tagger)
-            else:
-                words = [w for w, p, bio in sent]
-                ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in sent]
-                tag_scores = self.get_tag_scores(False, words, ws)
-                pt, _ = self.viterbi_decoding(tag_scores, self.tag_transitions, self.vt.w2i,self.ntags)
-                pos_tags = [self.vt.i2w[t] for t in pt]
-
+            bio_tags, pos_tags = self.tag_sent(sent)
             for go, gp, gu, pp in zip(gold_bios, gold_pos, bio_tags, pos_tags):
                 if go == gu:
                     good += 1
@@ -191,59 +160,76 @@ class Chunker(Tagger):
         renew_cg()
         return best_dev
 
+    @staticmethod
+    def train_pos_tagger(train_data, dev_data, options,vw, vt, vc):
+        pos_train_data = [[(w, p) for w, p, bio in s] for s in train_data]
+        pos_dev_data = [[(w, p) for w, p, bio in s] for s in dev_data]
+        pos_tagger = Tagger(options, vw, vt, vc)
+        pos_tagger.train(pos_train_data, pos_dev_data, options.pos_epochs, os.path.join(options.output, options.pos_model))
+        return pos_tagger
+
 if __name__ == '__main__':
     if options.conll_train != '' and options.output != '':
         if not os.path.isdir(options.output): os.mkdir(options.output)
-        train = list(Chunker.read(options.conll_train))
-        print 'load #sent:',len(train)
+        train_data = list(Chunker.read(options.conll_train))
+        dev_data = list(Chunker.read(options.conll_train))
+
+        print 'load #sent:',len(train_data)
         words = []
         tags = []
         bios = []
-        chars = {' ','<s>','</s>'}
+        vc = {' ', '<s>', '</s>'}
         wc = Counter()
-        for s in train:
+        for s in train_data:
             for w, p, bio in s:
                 words.append(w)
                 tags.append(p)
                 bios.append(bio)
-                [chars.add(x) for x in list(w)]
+                [vc.add(x) for x in list(w)]
                 wc[w] += 1
         words.append('_UNK_')
         bios.append('_START_')
         bios.append('_STOP_')
         tags.append('_START_')
         tags.append('_STOP_')
-        ch = list(chars)
-
-        print 'writing params file'
-        with open(os.path.join(options.output, options.params), 'w') as paramsfp:
-            pickle.dump((words, tags, bios, ch, options), paramsfp)
+        ch = list(vc)
 
         vw = util.Vocab.from_corpus([words])
         vb = util.Vocab.from_corpus([bios])
         vt = util.Vocab.from_corpus([tags])
-        chars = util.Vocab.from_corpus([ch])
+        vc = util.Vocab.from_corpus([ch])
+        if options.train_pos:
+            print 'train pos tagger started'
+            with open(os.path.join(options.output, options.pos_params), 'w') as paramsfp:
+                pickle.dump((vw, vt, vc, options), paramsfp)
+            pos_tagger = Chunker.train_pos_tagger(train_data, dev_data, options, vw, vt, vc)
+            print 'train pos tagger finished'
+        else:
+            print 'loading pos tagger'
+            with open(options.pos_params, 'r') as paramsfp:
+                p_vw, p_vt, p_vc, p_opt = pickle.load(paramsfp)
+            pos_tagger = Tagger(p_opt, p_vw, p_vt, p_vc)
+            pos_tagger.load(options.pos_model)
 
-        Chunker(options, vw, vt, chars, vb).train(train)
-
+        with open(os.path.join(options.output, options.params), 'w') as paramsfp:
+            pickle.dump((vw, vt, vc, vb, options), paramsfp)
+        Chunker(options, vw, vt, vc, vb, pos_tagger).train(train_data)
         options.model = os.path.join(options.output,options.model)
         options.params = os.path.join(options.output,options.params)
 
-    if options.conll_test != '' and options.params != '' and options.model != '' and options.outfile != '':
+    if (options.conll_test != '' and options.outfile != '') and options.params != '' and options.model != '' and options.pos_params != '' and options.pos_model != '':
         print options.model, options.params, options.eval_format
         print 'reading params'
+        with open(options.pos_params, 'r') as paramsfp:
+            p_vw, p_vt, p_vc, p_opt = pickle.load(paramsfp)
         with open(options.params, 'r') as paramsfp:
-            words, tags, bios, ch, opt = pickle.load(paramsfp)
-        vw = util.Vocab.from_corpus([words])
-        vb = util.Vocab.from_corpus([bios])
-        vt = util.Vocab.from_corpus([tags])
-        chars = util.Vocab.from_corpus([ch])
-        chunker = Chunker(options, vw, vt, chars, vb)
-        pos_tagger = Chunker(options, vw, vt, chars, vb)
-        print 'loading model'
+            p_vw, p_vt, p_vc, vb, opt = pickle.load(paramsfp)
+        print 'loading models'
+        pos_tagger = Tagger(p_opt, p_vw, p_vt, p_vc)
         print options.model
+        pos_tagger.load(options.pos_model)
+        chunker = Chunker(opt, vw, vt, vc, vb,pos_tagger)
         chunker.load(options.model)
-        pos_tagger.load(options.model+'.pos')
 
         test = list(Chunker.read(options.conll_test))
         print 'loaded',len(test),'sentences!'
@@ -257,34 +243,4 @@ if __name__ == '__main__':
                 [output.append(' '.join([sent[i][0], pos_tags[i], tags[i]])) for i in xrange(len(tags))]
             writer.write('\n'.join(output))
             writer.write('\n\n')
-        print 'done!'
-
-    if options.inputs != None and options.params != '' and options.model != '':
-        print options.model, options.params, options.eval_format
-        print 'reading params'
-        with open(options.params, 'r') as paramsfp:
-            words, tags, bios, ch, opt = pickle.load(paramsfp)
-        vw = util.Vocab.from_corpus([words])
-        vb = util.Vocab.from_corpus([bios])
-        vt = util.Vocab.from_corpus([tags])
-        chars = util.Vocab.from_corpus([ch])
-        chunker = Chunker(options, vw, vt, chars, vb)
-        pos_tagger = Chunker(options, vw, vt, chars, vb)
-        print 'loading model'
-        print options.model
-        chunker.load(options.model)
-        pos_tagger.load(options.model+'.pos')
-
-        inputs = options.inputs.strip().split(',')
-        for input in inputs:
-            print input
-            test = list(Chunker.read_raw_file(input))
-            print 'loaded',len(test),'sentences!'
-            writer = codecs.open(input+options.ext, 'w')
-            for sent in test:
-                output = list()
-                tags, pos_tags = chunker.tag_sent(sent, pos_tagger)
-                [output.append(' '.join([sent[i], pos_tags[i], tags[i]])) for i in xrange(len(tags))]
-                writer.write('\n'.join(output))
-                writer.write('\n\n')
         print 'done!'

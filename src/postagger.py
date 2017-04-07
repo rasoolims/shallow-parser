@@ -4,7 +4,6 @@ from optparse import OptionParser
 import numpy as np
 import util
 
-
 def parse_options():
     parser = OptionParser()
     parser.add_option('--train', dest='conll_train', help='Annotated CONLL train file', metavar='FILE', default='')
@@ -12,10 +11,12 @@ def parse_options():
     parser.add_option('--test', dest='conll_test', help='Annotated CONLL test file', metavar='FILE', default='')
     parser.add_option('--inputs', dest='inputs', help='Input tagged files separated by ,', metavar='FILE', default=None)
     parser.add_option('--ext', dest='ext', help='File extension for outputfiles', type='str', default='.chunk')
-    parser.add_option('--params', dest='params', help='Parameters file', metavar='FILE', default='params.pickle')
+    parser.add_option('--params', dest='params', help='Parameters file', metavar='FILE', default='chunk.params')
+    parser.add_option('--pos_params', dest='pos_params', default='pos.params')
     parser.add_option('--extrn', dest='external_embedding', help='External embeddings', metavar='FILE')
     parser.add_option('--init', dest='initial_embeddings', help='Initial embeddings', metavar='FILE')
-    parser.add_option('--model', dest='model', help='Load/Save model file', metavar='FILE', default='model.model')
+    parser.add_option('--model', dest='model', help='Load/Save model file', metavar='FILE', default='chunk.model')
+    parser.add_option('--pos_model', dest='pos_model',default='pos.model')
     parser.add_option('--wembedding', type='int', dest='wembedding_dims', default=128)
     parser.add_option('--cembedding', type='int', dest='cembedding_dims', help='size of character embeddings',
                       default=30)
@@ -34,12 +35,12 @@ def parse_options():
     parser.add_option("--drop", action="store_true", dest="drop", default=False, help='Use dropout.')
     parser.add_option("--gru", action="store_true", dest="gru", default=False, help='Use GRU instead of LSTM.')
     parser.add_option("--save_best", action="store_true", dest="save_best", default=False, help='Store the best model.')
+    parser.add_option("--train_pos", action="store_true", dest="train_pos", default=False, help='Train pos tagger before chunking.')
     parser.add_option("--dropout", type="float", dest="dropout", default=0.33, help='Dropout probability.')
     parser.add_option('--mem', type='int', dest='mem', default=2048)
     parser.add_option('--k', type='int', dest='k', help='word LSTM depth', default=1)
     parser.add_option('--batch', type='int', dest='batch', default=50)
     return parser.parse_args()
-
 
 import _dynet as dy
 (options, args) = parse_options()
