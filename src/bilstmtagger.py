@@ -1,5 +1,9 @@
 from postagger import  *
 
+#todo add pos embeddings and see the effect.
+#todo trying to initialize layers with tagger.
+#todo try dependency-based bio tags.
+
 class Chunker(Tagger):
     def __init__(self, options, words, tags, bios, chars, pos_tagger):
         Tagger.__init__(self, options, words, tags, chars)
@@ -26,6 +30,8 @@ class Chunker(Tagger):
         for i in xrange(self.chars.size()):
             self.CE.init_row(i, self.pos_tagger.CE[i].npvalue())
         #todo try to initialize layers as well
+        self.char_lstms = self.pos_tagger.char_lstms
+        self.tag_lstms = self.pos_tagger.tag_lstms
 
     @staticmethod
     def read(fname):
