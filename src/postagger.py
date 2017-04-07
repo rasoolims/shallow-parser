@@ -273,7 +273,6 @@ class Tagger:
         parser.add_option('--wembedding', type='int', dest='wembedding_dims', default=128)
         parser.add_option('--cembedding', type='int', dest='cembedding_dims', help='size of character embeddings', default=30)
         parser.add_option('--epochs', type='int', dest='epochs', default=5)
-        parser.add_option('--lstmdims', type='int', dest='lstm_dims', default=200)
         parser.add_option('--tlstmdims', type='int', dest='tag_lstm_dims', default=200)
         parser.add_option('--clstmdims', type='int', dest='clstm_dims', default=100)
         parser.add_option('--outdir', type='string', dest='output', default='')
