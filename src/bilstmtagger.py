@@ -1,8 +1,10 @@
 from postagger import  *
 
 class Chunker(Tagger):
-    def __init__(self, options, words, tags, bios, chars):
+    def __init__(self, options, words, tags, bios, chars, pos_tagger):
         Tagger.__init__(self, options, words, tags, chars)
+        self.pos_tagger = pos_tagger
+        if options.tag_init: self.init_pos_tagger()
         self.activations = {'tanh': tanh, 'sigmoid': logistic, 'relu': rectify}
         self.activation = self.activations[options.activation]
         self.vb = util.Vocab.from_corpus([bios])
@@ -17,6 +19,13 @@ class Chunker(Tagger):
 
         inp_dim = options.wembedding_dims + self.edim + options.clstm_dims + self.ntags
         self.chunk_lstms = BiRNNBuilder(self.k, inp_dim, options.lstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
+
+    def init_pos_tagger(self):
+        for i in xrange(self.nwords):
+            self.WE.init_row(i, self.pos_tagger.WE[i].npvalue())
+        for i in xrange(self.chars.size()):
+            self.CE.init_row(i, self.pos_tagger.CE[i].npvalue())
+        #todo try to initialize layers as well
 
     @staticmethod
     def read(fname):
@@ -179,6 +188,13 @@ class Chunker(Tagger):
 
 
 if __name__ == '__main__':
+    print 'reading pos tagger'
+    with open(options.pos_params, 'r') as paramsfp:
+        p_words, p_tags, p_ch, p_opt = pickle.load(paramsfp)
+    tagger = Tagger(p_opt, p_words, p_tags, p_ch)
+    tagger.load(options.pos_model)
+    print 'writing params file'
+
     if options.conll_train != '' and options.output != '':
         if not os.path.isdir(options.output): os.mkdir(options.output)
         train = list(Chunker.read(options.conll_train))
@@ -202,11 +218,10 @@ if __name__ == '__main__':
         bio_tags.append('_STOP_')
         ch = list(chars)
 
-        print 'writing params file'
         with open(os.path.join(options.output, options.params), 'w') as paramsfp:
             pickle.dump((words, bio_tags, bios, ch, options), paramsfp)
 
-        Chunker(options, words, bio_tags, bios, ch).train()
+        Chunker(options, words, bio_tags, bios, ch,tagger).train()
 
         options.model = os.path.join(options.output,options.model)
         options.params = os.path.join(options.output,options.params)
@@ -216,18 +231,18 @@ if __name__ == '__main__':
         print 'reading params'
         with open(options.params, 'r') as paramsfp:
             words, bio_tags, bios, ch, opt = pickle.load(paramsfp)
-        tagger = Chunker(opt, words, bio_tags, bios, ch)
+        chunker = Chunker(opt, words, bio_tags, bios, ch,tagger)
 
         print 'loading model'
         print options.model
-        tagger.load(options.model)
+        chunker.load(options.model)
 
         test = list(Chunker.read(options.conll_test))
         print 'loaded',len(test),'sentences!'
         writer = codecs.open(options.outfile, 'w')
         for sent in test:
             output = list()
-            bio_tags,pos_tags = tagger.tag_sent(sent)
+            bio_tags,pos_tags = chunker.tag_sent(sent)
             if options.eval_format:
                  [output.append(' '.join([sent[i][0], pos_tags[i], sent[i][2], bio_tags[i]])) for i in xrange(len(bio_tags))]
             else:

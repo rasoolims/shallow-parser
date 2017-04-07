@@ -19,8 +19,7 @@ def parse_options():
     parser.add_option('--pos_params', dest='pos_params', metavar='FILE', default=None)
     parser.add_option('--pos_model', dest='pos_model', metavar='FILE', default=None)
     parser.add_option('--wembedding', type='int', dest='wembedding_dims', default=128)
-    parser.add_option('--cembedding', type='int', dest='cembedding_dims', help='size of character embeddings',
-                      default=30)
+    parser.add_option('--cembedding', type='int', dest='cembedding_dims', help='size of character embeddings', default=30)
     parser.add_option('--pembedding', type='int', dest='pembedding_dims', default=30)
     parser.add_option('--epochs', type='int', dest='epochs', default=5)
     parser.add_option('--pos_epochs', type='int', dest='pos_epochs', default=2)
@@ -36,6 +35,7 @@ def parse_options():
     parser.add_option("--drop", action="store_true", dest="drop", default=False, help='Use dropout.')
     parser.add_option("--gru", action="store_true", dest="gru", default=False, help='Use GRU instead of LSTM.')
     parser.add_option("--save_best", action="store_true", dest="save_best", default=False, help='Store the best model.')
+    parser.add_option("--tag_init", action="store_true", dest="tag_init", default=False, help='Initialize chunker immediate layers with pos tagger.')
     parser.add_option("--dropout", type="float", dest="dropout", default=0.33, help='Dropout probability.')
     parser.add_option('--mem', type='int', dest='mem', default=2048)
     parser.add_option('--k', type='int', dest='k', help='word LSTM depth', default=1)
