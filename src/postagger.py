@@ -273,7 +273,6 @@ class Tagger:
         else:
             return dy.scalarInput(0), viterbi_tags
 
-
     def tag_sent(self, sent):
         renew_cg()
         words = [w for w, p, bio in sent]
