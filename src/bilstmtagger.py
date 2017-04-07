@@ -5,7 +5,7 @@ import numpy as np
 
 import util
 
-class Tagger:
+class Chunker:
     def __init__(self, options, vw, vt, vb, vc):
         self.options = options
         self.activations = {'tanh': tanh, 'sigmoid': logistic, 'relu': rectify}
@@ -272,7 +272,7 @@ class Tagger:
                     else:
                         if not pos_tagger:
                             print 'loading pos tagger model'
-                            pos_tagger = Tagger(self.options, self.vw, self.vt, self.vb, self.vc)
+                            pos_tagger = Chunker(self.options, self.vw, self.vt, self.vb, self.vc)
                             pos_tagger.load(os.path.join(self.options.output, self.options.model+'.pos'))
                             print 'validate pos tagger accuracy'
                             pos_tagger.validate(best_dev, False, pos_tagger)
@@ -384,7 +384,7 @@ class Tagger:
 
 if __name__ == '__main__':
     import _dynet as dy
-    (options, args) = Tagger.parse_options()
+    (options, args) = Chunker.parse_options()
     dyparams = dy.DynetParams()
     dyparams.from_args()
     dyparams.set_mem(options.mem)
@@ -393,7 +393,7 @@ if __name__ == '__main__':
 
     if options.conll_train != '' and options.output != '':
         if not os.path.isdir(options.output): os.mkdir(options.output)
-        train = list(Tagger.read(options.conll_train))
+        train = list(Chunker.read(options.conll_train))
         print 'load #sent:',len(train)
         words = []
         tags = []
@@ -423,7 +423,7 @@ if __name__ == '__main__':
         vt = util.Vocab.from_corpus([tags])
         chars = util.Vocab.from_corpus([ch])
 
-        Tagger(options, vw, vt, vb, chars).train()
+        Chunker(options, vw, vt, vb, chars).train()
 
         options.model = os.path.join(options.output,options.model)
         options.params = os.path.join(options.output,options.params)
@@ -437,14 +437,14 @@ if __name__ == '__main__':
         vb = util.Vocab.from_corpus([bios])
         vt = util.Vocab.from_corpus([tags])
         chars = util.Vocab.from_corpus([ch])
-        chunker = Tagger(options, vw, vt, vb, chars)
-        pos_tagger = Tagger(options, vw, vt, vb, chars)
+        chunker = Chunker(options, vw, vt, vb, chars)
+        pos_tagger = Chunker(options, vw, vt, vb, chars)
         print 'loading model'
         print options.model
         chunker.load(options.model)
         pos_tagger.load(options.model+'.pos')
 
-        test = list(Tagger.read(options.conll_test))
+        test = list(Chunker.read(options.conll_test))
         print 'loaded',len(test),'sentences!'
         writer = codecs.open(options.outfile, 'w')
         for sent in test:
@@ -467,8 +467,8 @@ if __name__ == '__main__':
         vb = util.Vocab.from_corpus([bios])
         vt = util.Vocab.from_corpus([tags])
         chars = util.Vocab.from_corpus([ch])
-        chunker = Tagger(options, vw, vt, vb, chars)
-        pos_tagger = Tagger(options, vw, vt, vb, chars)
+        chunker = Chunker(options, vw, vt, vb, chars)
+        pos_tagger = Chunker(options, vw, vt, vb, chars)
         print 'loading model'
         print options.model
         chunker.load(options.model)
@@ -477,7 +477,7 @@ if __name__ == '__main__':
         inputs = options.inputs.strip().split(',')
         for input in inputs:
             print input
-            test = list(Tagger.read_tagged_file(input))
+            test = list(Chunker.read_tagged_file(input))
             print 'loaded',len(test),'sentences!'
             writer = codecs.open(input+options.ext, 'w')
             for sent in test:
