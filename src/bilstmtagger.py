@@ -1,75 +1,26 @@
 from collections import Counter
 import random,os,codecs,pickle,time
 from optparse import OptionParser
-import numpy as np
 import util
+from postagger import Tagger
 
-class Chunker:
-    def __init__(self, options, vw, vt, vb, vc):
-        self.options = options
+class Chunker(Tagger):
+    def __init__(self, options, vw, vt, vc, vb):
+        Tagger.__init__(self,options,vw,vt,vc)
         self.activations = {'tanh': tanh, 'sigmoid': logistic, 'relu': rectify}
         self.activation = self.activations[options.activation]
-        self.vw = vw
         self.vb = vb
-        self.vt = vt
-        self.vc = vc
         self.UNK_W = self.vw.w2i['_UNK_']
-        self.batch = options.batch
-        self.nwords = self.vw.size()
-        self.ntags = self.vt.size()
         self.nBios = self.vb.size()
-        print 'num of pos tags',self.ntags, 'num of bio tags',self.nBios
-        self.model = Model()
-        self.trainer = AdamTrainer(self.model)
-
-        self.WE = self.model.add_lookup_parameters((self.nwords, options.wembedding_dims))
-        self.CE = self.model.add_lookup_parameters((self.vc.size(), options.cembedding_dims))
+        print 'num of bio tags',self.nBios
         self.PE = self.model.add_lookup_parameters((self.ntags, options.pembedding_dims))
         self.H1 = self.model.add_parameters((options.hidden_units, options.lstm_dims)) if options.hidden_units > 0 else None
         self.H2 = self.model.add_parameters((options.hidden2_units, options.hidden_units)) if options.hidden2_units > 0 else None
         hdim = options.hidden2_units if options.hidden2_units>0 else options.hidden_units if options.hidden_units>0 else options.lstm_dims
         self.O = self.model.add_parameters((self.nBios, hdim))
-        self.k = options.k
-        self.drop = options.drop
-        self.dropout = options.dropout
         self.transitions = self.model.add_lookup_parameters((self.nBios, self.nBios))
-        self.tag_transitions = self.model.add_lookup_parameters((self.ntags, self.ntags))
-        self.edim = 0
-        self.external_embedding = None
-        if options.initial_embeddings is not None:
-            initial_embeddings_fp = open(options.initial_embeddings, 'r')
-            initial_embeddings_fp.readline()
-            initial_embeddings_vec = {line.split(' ')[0]: [float(f) for f in line.strip().split(' ')[1:]] for line in
-                                       initial_embeddings_fp}
-            initial_embeddings_fp.close()
-            for word in self.vw.w2i.keys():
-               if word in initial_embeddings_vec:
-                   assert options.wembedding_dims == len(initial_embeddings_vec[word])
-                   self.WE.init_row(self.vw.w2i.get(word), initial_embeddings_vec[word])
-        if options.external_embedding is not None:
-            external_embedding_fp = open(options.external_embedding, 'r')
-            external_embedding_fp.readline()
-            self.external_embedding = {line.split(' ')[0]: [float(f) for f in line.strip().split(' ')[1:]] for line in
-                                       external_embedding_fp}
-            external_embedding_fp.close()
-            self.edim = len(self.external_embedding.values()[0])
-            noextrn = [0.0 for _ in xrange(self.edim)]
-            self.extrnd = {word: i + 3 for i, word in enumerate(self.external_embedding)}
-            self.extrn_lookup = self.model.add_lookup_parameters((len(self.external_embedding) + 3, self.edim))
-            self.extrn_lookup.set_updated(False)
-            for word, i in self.extrnd.iteritems():
-                self.extrn_lookup.init_row(i, self.external_embedding[word])
-            self.extrnd['_UNK_'] = 1
-            self.extrnd['_START_'] = 2
-            self.extrn_lookup.init_row(1, noextrn)
-            print 'Loaded external embedding. Vector dimensions:', self.edim
-
-        tag_inp_dim = options.wembedding_dims + self.edim + options.clstm_dims
-        inp_dim = tag_inp_dim + self.ntags + options.pembedding_dims
+        inp_dim = options.wembedding_dims + self.edim + options.clstm_dims + self.ntags + options.pembedding_dims
         self.chunk_lstms = BiRNNBuilder(self.k, inp_dim, options.lstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
-        self.tag_lstms = BiRNNBuilder(self.k, tag_inp_dim, options.tag_lstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
-        self.char_lstms = BiRNNBuilder(1, options.cembedding_dims, options.clstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
-        self.tagO = self.model.add_parameters((self.ntags, options.tag_lstm_dims))
 
     @staticmethod
     def read(fname):
@@ -85,17 +36,12 @@ class Chunker:
         if sent: yield  sent
 
     @staticmethod
-    def read_tagged_file(fname):
+    def read_raw_file(fname):
         for line in file(fname):
-            spl = line.strip().split()
-            sent = []
-            for s in spl:
-                w = s[:s.rfind('_')]
-                p = s[s.rfind('_')+1:]
-                sent.append((w,p,'_'))
+            sent = line.strip().split()
             yield sent
 
-    def build_pos_graph(self, sent_words, words, is_train):
+    def build_graph(self, sent_words, words, is_train):
         input_lstm = self.get_lstm_features(is_train, sent_words, words, False)[0]
 
         O = parameter(self.tagO)
@@ -104,15 +50,6 @@ class Chunker:
             score_t = O*f
             probs.append(score_t)
         return probs
-
-    def get_tag_scores(self,is_train, sent_words, words):
-        tag_lstm, char_lstms, wembs, evec = self.get_lstm_features(is_train, sent_words, words, False)
-        O = parameter(self.tagO)
-        tag_scores = []
-        for f in tag_lstm:
-            score_t = O * f
-            tag_scores.append(score_t)
-        return tag_scores
 
     def get_lstm_features(self, is_train, sent_words, words, is_chunking, predicated_pos = None):
         if is_chunking:
@@ -131,15 +68,14 @@ class Chunker:
             for w in sent_words:
                 char_lstms.append(self.char_lstms.transduce([self.CE[self.vc.w2i[c]] if (c in self.vc.w2i and not is_train) or (is_train and random.random() >= 0.001) else self.CE[self.vc.w2i[' ']] for c in ['<s>'] + list(w) + ['</s>']]))
             wembs = [noise(self.WE[w], 0.1) if is_train else self.WE[w] for w in words]
-            evec = [self.extrn_lookup[self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[
-                1] if self.edim > 0 else None for w in words]
+            evec = [self.extrn_lookup[self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[1] if self.edim > 0 else None for w in words]
             inputs = [concatenate(filter(None, [wembs[i], evec[i], char_lstms[i][-1]])) for i in xrange(len(words))]
             if self.drop:
                 [dropout(inputs[i], self.dropout) for i in xrange(len(inputs))]
             input_lstm = self.tag_lstms.transduce(inputs)
             return input_lstm, char_lstms, wembs, evec
 
-    def build_chunking_graph(self, sent_words, words, is_train, predicated_pos):
+    def build_graph(self, sent_words, words, is_train, predicated_pos):
         input_lstm,pos_probs = self.get_lstm_features(is_train, sent_words, words, True, predicated_pos)
         H1 = parameter(self.H1) if self.H1 != None else None
         H2 = parameter(self.H2) if self.H2 != None else None
@@ -151,76 +87,10 @@ class Chunker:
             scores.append(score_t)
         return scores,pos_probs
 
-    def score_sentence(self, observations, labels, trans_matrix, dct):
-        assert len(observations) == len(labels)
-        score_seq = [0]
-        score = scalarInput(0)
-        labels = [dct['_START_']] + labels
-        for i, obs in enumerate(observations):
-            score = score + pick(trans_matrix[labels[i+1]],labels[i]) + pick(obs, labels[i+1])
-            score_seq.append(score.value())
-        score = score + pick(trans_matrix[dct['_STOP_']],labels[-1])
-        return score
-
-    def forward(self, observations, ntags, trans_matrix, dct):
-        def log_sum_exp(scores):
-            npval = scores.npvalue()
-            argmax_score = np.argmax(npval)
-            max_score_expr = pick(scores, argmax_score)
-            max_score_expr_broadcast = concatenate([max_score_expr] * ntags)
-            return max_score_expr + log(sum_cols(transpose(exp(scores - max_score_expr_broadcast))))
-
-        init_alphas = [-1e10] * ntags
-        init_alphas[dct['_START_']] = 0
-        for_expr = inputVector(init_alphas)
-        for obs in observations:
-            alphas_t = []
-            for next_tag in range(ntags):
-                obs_broadcast = concatenate([pick(obs, next_tag)] * ntags)
-                next_tag_expr = for_expr + trans_matrix[next_tag] + obs_broadcast
-                alphas_t.append(log_sum_exp(next_tag_expr))
-            for_expr = concatenate(alphas_t)
-        terminal_expr = for_expr + trans_matrix[dct['_STOP_']]
-        alpha = log_sum_exp(terminal_expr)
-        return alpha
-
-    def viterbi_decoding(self, observations, trans_matrix, dct, nL):
-        backpointers = []
-        init_vvars   = [-1e10] * nL
-        init_vvars[dct['_START_']] = 0 # <Start> has all the probability
-        for_expr = inputVector(init_vvars)
-        trans_exprs  = [trans_matrix[idx] for idx in range(nL)]
-        for obs in observations:
-            bptrs_t = []
-            vvars_t = []
-            for next_tag in range(nL):
-                next_tag_expr = for_expr + trans_exprs[next_tag]
-                next_tag_arr = next_tag_expr.npvalue()
-                best_tag_id  = np.argmax(next_tag_arr)
-                bptrs_t.append(best_tag_id)
-                vvars_t.append(pick(next_tag_expr, best_tag_id))
-            for_expr = concatenate(vvars_t) + obs
-            backpointers.append(bptrs_t)
-        # Perform final transition to terminal
-        terminal_expr = for_expr + trans_exprs[dct['_STOP_']]
-        terminal_arr  = terminal_expr.npvalue()
-        best_tag_id = np.argmax(terminal_arr)
-        path_score  = pick(terminal_expr, best_tag_id)
-        # Reverse over the backpointers to get the best path
-        best_path = [best_tag_id] # Start with the tag that was best for terminal
-        for bptrs_t in reversed(backpointers):
-            best_tag_id = bptrs_t[best_tag_id]
-            best_path.append(best_tag_id)
-        start = best_path.pop() # Remove the start symbol
-        best_path.reverse()
-        assert start == dct['_START_']
-        # Return best path and best path's score
-        return best_path, path_score
-
-    def neg_log_loss(self, sent_words, words, labels, is_chunking, predicated_pos=None):
-        observations = self.build_chunking_graph(sent_words, words, True,predicated_pos)[0] if is_chunking else self.build_pos_graph(sent_words, words, True)
-        gold_score = self.score_sentence(observations, labels, self.transitions if is_chunking else self.tag_transitions, self.vb.w2i if is_chunking else self.vt.w2i)
-        forward_score = self.forward(observations, self.nBios if is_chunking else self.ntags, self.transitions if is_chunking else self.tag_transitions, self.vb.w2i if is_chunking else self.vt.w2i)
+    def neg_log_loss(self, sent_words, words, labels, predicated_pos):
+        observations = self.build_graph(sent_words, words, True, predicated_pos)[0]
+        gold_score = self.score_sentence(observations, labels, self.transitions, self.vb.w2i)
+        forward_score = self.forward(observations, self.nBios, self.transitions, self.vb.w2i)
         return forward_score - gold_score
 
     def tag_sent(self, sent, pos_tagger):
@@ -231,28 +101,30 @@ class Chunker:
         if pos_tagger:
             tag_scores = pos_tagger.get_tag_scores(False,words, ws)
             pos_tags, _ = pos_tagger.viterbi_decoding(tag_scores, pos_tagger.tag_transitions, pos_tagger.vt.w2i, pos_tagger.ntags)
-        observations,tag_scores = self.build_chunking_graph(words, ws, False, pos_tags)
+        observations,tag_scores = self.build_graph(words, ws, False, pos_tags)
         bios, score = self.viterbi_decoding(observations,self.transitions,self.vb.w2i, self.nBios)
         if not pos_tagger:
             pos_tags, _ = self.viterbi_decoding(tag_scores,self.tag_transitions,self.vt.w2i, self.ntags)
 
         return [self.vb.i2w[b] for b in bios],[pos_tagger.vt.i2w[t] if pos_tagger else  self.vt.i2w[t] for t in pos_tags]
 
-    def train(self):
+    def train(self, train_data):
         tagged, loss = 0,0
         best_dev = float('-inf')
-        pos_tagger = None
+        print 'train pos tagger started'
+        pos_tagger = self.train_pos_tagger(train_data)
+        print 'train pos tagger finished'
         for ITER in xrange(self.options.epochs):
             print 'ITER', ITER
-            random.shuffle(train)
+            random.shuffle(train_data)
             batch = []
-            for i, s in enumerate(train, 1):
+            for i, s in enumerate(train_data, 1):
                 if i % 1000 == 0:
                     self.trainer.status()
                     print loss / tagged
                     loss = 0
                     tagged = 0
-                    best_dev = self.validate(best_dev, ITER>=options.pos_epochs, pos_tagger)
+                    best_dev = self.validate(best_dev, pos_tagger)
                 ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in s]
                 ps = [self.vt.w2i[t] for w, t, bio in s]
                 bs = [self.vb.w2i[bio] for w, p, bio in s]
@@ -260,91 +132,67 @@ class Chunker:
                 tagged += len(ps)
 
                 if len(batch)>=self.batch:
-                    if ITER < options.pos_epochs:
-                        for j in xrange(len(batch)):
-                            ws,ps,_ = batch[j]
-                            sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  ps, False)
-                            loss+= sum_errs.scalar_value()
-                        sum_errs.backward()
-                        self.trainer.update()
-                        renew_cg()
-                    else:
-                        if not pos_tagger:
-                            print 'loading pos tagger model'
-                            pos_tagger = Chunker(self.options, self.vw, self.vt, self.vb, self.vc)
-                            pos_tagger.load(os.path.join(self.options.output, self.options.model+'.pos'))
-                            print 'validate pos tagger accuracy'
-                            pos_tagger.validate(best_dev, False, pos_tagger)
-                            best_dev = float('-inf')
-                        for j in xrange(len(batch)):
-                            ws,_,bs = batch[j]
-                            tag_scores = pos_tagger.get_tag_scores(False, words, ws)
-                            pos_tags, _ = pos_tagger.viterbi_decoding(tag_scores, pos_tagger.tag_transitions,pos_tagger.vt.w2i, pos_tagger.ntags)
-                            sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  bs, True, pos_tags)
-                            loss += sum_errs.scalar_value()
-                        sum_errs.backward()
-                        self.trainer.update()
-                        renew_cg()
+                    for j in xrange(len(batch)):
+                        ws,_,bs = batch[j]
+                        tag_scores = pos_tagger.get_tag_scores(False, words, ws)
+                        pos_tags, _ = pos_tagger.viterbi_decoding(tag_scores, pos_tagger.tag_transitions,pos_tagger.vt.w2i, pos_tagger.ntags)
+                        sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  bs, pos_tags)
+                        loss += sum_errs.scalar_value()
+                    sum_errs.backward()
+                    self.trainer.update()
+                    renew_cg()
                     batch = []
             self.trainer.status()
             print loss / tagged
-            best_dev = self.validate(best_dev, ITER>=options.pos_epochs, pos_tagger)
+            best_dev = self.validate(best_dev, pos_tagger)
         if not options.save_best or not options.dev_file:
             print 'Saving the final model'
             self.save(os.path.join(options.output, options.model))
 
-    def validate(self, best_dev, save_as_chunk=True, pos_tagger = None):
+    def train_pos_tagger(self, train_data):
+        pos_train_data = [[(w,p) for w,p,bio in s] for s in train_data]
+        pos_dev_data = [[(w,p) for w,p,bio in s] for s in  list(self.read(self.options.dev_file))]
+        pos_tagger = Tagger(self.options, self.vw, self.vt, self.vc)
+        pos_tagger.train(pos_train_data, pos_dev_data, self.options.pos_epochs, os.path.join(self.options.output, self.options.model+'.pos'))
+        return pos_tagger
+
+    def validate(self, best_dev, pos_tagger = None):
         dev = list(self.read(options.dev_file))
         good = bad = 0.0
         good_pos = bad_pos = 0.0
-        if options.save_best and options.dev_file:
-            for sent in dev:
-                gold_bios = [b for w, t, b in sent]
-                gold_pos = [t for w, t, b in sent]
-                bio_tags, pos_tags = [None]*len(gold_bios), [None]*len(gold_pos)
-                if pos_tagger:
-                    bio_tags, pos_tags = self.tag_sent(sent, pos_tagger)
-                else:
-                    words = [w for w, p, bio in sent]
-                    ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in sent]
-                    tag_scores = self.get_tag_scores(False, words, ws)
-                    pt, _ = self.viterbi_decoding(tag_scores, self.tag_transitions, self.vt.w2i,self.ntags)
-                    pos_tags = [self.vt.i2w[t] for t in pt]
-
-                for go, gp, gu, pp in zip(gold_bios, gold_pos, bio_tags, pos_tags):
-                    if go == gu:
-                        good += 1
-                    else:
-                        bad += 1
-
-                    if gp == pp:
-                        good_pos += 1
-                    else:
-                        bad_pos += 1
-            res = good / (good + bad)
-            pos_res = good_pos / (good_pos + bad_pos)
-            if save_as_chunk:
-                if res > best_dev:
-                    print 'dev accuracy (saving):', res, 'pos accuracy', pos_res
-                    best_dev = res
-                    self.save(os.path.join(self.options.output, self.options.model))
-                else:
-                    print 'dev accuracy:', res, 'pos accuracy', pos_res
+        for sent in dev:
+            gold_bios = [b for w, t, b in sent]
+            gold_pos = [t for w, t, b in sent]
+            bio_tags, pos_tags = [None]*len(gold_bios), [None]*len(gold_pos)
+            if pos_tagger:
+                bio_tags, pos_tags = self.tag_sent(sent, pos_tagger)
             else:
-                if pos_res > best_dev:
-                    print 'pos accuracy (saving)', pos_res
-                    best_dev = pos_res
-                    self.save(os.path.join(self.options.output, self.options.model+'.pos'))
+                words = [w for w, p, bio in sent]
+                ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in sent]
+                tag_scores = self.get_tag_scores(False, words, ws)
+                pt, _ = self.viterbi_decoding(tag_scores, self.tag_transitions, self.vt.w2i,self.ntags)
+                pos_tags = [self.vt.i2w[t] for t in pt]
+
+            for go, gp, gu, pp in zip(gold_bios, gold_pos, bio_tags, pos_tags):
+                if go == gu:
+                    good += 1
                 else:
-                    print 'pos accuracy', pos_res
+                    bad += 1
+
+                if gp == pp:
+                    good_pos += 1
+                else:
+                    bad_pos += 1
+        res = good / (good + bad)
+        pos_res = good_pos / (good_pos + bad_pos)
+        if res > best_dev:
+            print 'dev accuracy (saving):', res, 'pos accuracy', pos_res
+            best_dev = res
+            self.save(os.path.join(self.options.output, self.options.model))
+        else:
+            print 'dev accuracy:', res, 'pos accuracy', pos_res
         renew_cg()
         return best_dev
-
-    def load(self, f):
-        self.model.load(f)
-
-    def save(self, f):
-        self.model.save(f)
 
     @staticmethod
     def parse_options():
@@ -422,7 +270,7 @@ if __name__ == '__main__':
         vt = util.Vocab.from_corpus([tags])
         chars = util.Vocab.from_corpus([ch])
 
-        Chunker(options, vw, vt, vb, chars).train()
+        Chunker(options, vw, vt, chars, vb).train(train)
 
         options.model = os.path.join(options.output,options.model)
         options.params = os.path.join(options.output,options.params)
@@ -436,8 +284,8 @@ if __name__ == '__main__':
         vb = util.Vocab.from_corpus([bios])
         vt = util.Vocab.from_corpus([tags])
         chars = util.Vocab.from_corpus([ch])
-        chunker = Chunker(options, vw, vt, vb, chars)
-        pos_tagger = Chunker(options, vw, vt, vb, chars)
+        chunker = Chunker(options, vw, vt, chars, vb)
+        pos_tagger = Chunker(options, vw, vt, chars, vb)
         print 'loading model'
         print options.model
         chunker.load(options.model)
@@ -466,8 +314,8 @@ if __name__ == '__main__':
         vb = util.Vocab.from_corpus([bios])
         vt = util.Vocab.from_corpus([tags])
         chars = util.Vocab.from_corpus([ch])
-        chunker = Chunker(options, vw, vt, vb, chars)
-        pos_tagger = Chunker(options, vw, vt, vb, chars)
+        chunker = Chunker(options, vw, vt, chars, vb)
+        pos_tagger = Chunker(options, vw, vt, chars, vb)
         print 'loading model'
         print options.model
         chunker.load(options.model)
@@ -476,16 +324,13 @@ if __name__ == '__main__':
         inputs = options.inputs.strip().split(',')
         for input in inputs:
             print input
-            test = list(Chunker.read_tagged_file(input))
+            test = list(Chunker.read_raw_file(input))
             print 'loaded',len(test),'sentences!'
             writer = codecs.open(input+options.ext, 'w')
             for sent in test:
                 output = list()
                 tags, pos_tags = chunker.tag_sent(sent, pos_tagger)
-                if options.eval_format:
-                     [output.append(' '.join([sent[i][0], pos_tags[i][1], sent[i][2], tags[i]])) for i in xrange(len(tags))]
-                else:
-                    [output.append(' '.join([sent[i][0], pos_tags[i][1], tags[i]])) for i in xrange(len(tags))]
+                [output.append(' '.join([sent[i], pos_tags[i], tags[i]])) for i in xrange(len(tags))]
                 writer.write('\n'.join(output))
                 writer.write('\n\n')
         print 'done!'
