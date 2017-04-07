@@ -35,12 +35,6 @@ class Chunker(Tagger):
                 sent.append((w, p, bio))
         if sent: yield  sent
 
-    @staticmethod
-    def read_raw_file(fname):
-        for line in file(fname):
-            sent = line.strip().split()
-            yield sent
-
     def build_graph(self, sent_words, words, is_train):
         input_lstm = self.get_lstm_features(is_train, sent_words, words, False)[0]
 
