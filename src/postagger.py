@@ -113,6 +113,11 @@ class Tagger:
                 sent.append((w,p))
             yield sent
 
+    @staticmethod
+    def read_raw(fname):
+        for line in file(fname):
+            yield line.strip().split()
+
     def build_graph(self, sent_words, words, is_train):
         input_lstm = self.get_lstm_features(is_train, sent_words, words)
 
@@ -326,13 +331,13 @@ if __name__ == '__main__':
         print options.model
         tagger.load(options.model)
 
-        test = list(Tagger.read(options.conll_test))
+        test = list(Tagger.read_raw(options.conll_test))
         print 'loaded',len(test),'sentences!'
         writer = codecs.open(options.outfile, 'w')
         for sent in test:
             output = list()
             tags, pos_tags = tagger.tag_sent(sent)
-            [output.append((sent[i][0]+'_'+pos_tags[i])) for i in xrange(len(tags))]
-            writer.write('\n'.join(output))
-            writer.write('\n\n')
+            [output.append((sent[i]+'_'+pos_tags[i])) for i in xrange(len(tags))]
+            writer.write(' '.join(output))
+            writer.write('\n')
         print 'done!'
