@@ -16,6 +16,8 @@ def parse_options():
     parser.add_option('--extrn', dest='external_embedding', help='External embeddings', metavar='FILE')
     parser.add_option('--init', dest='initial_embeddings', help='Initial embeddings', metavar='FILE')
     parser.add_option('--model', dest='model', help='Load/Save model file', metavar='FILE', default='model.model')
+    parser.add_option('--pos_params', dest='pos_params', metavar='FILE', default=None)
+    parser.add_option('--pos_model', dest='pos_model', metavar='FILE', default=None)
     parser.add_option('--wembedding', type='int', dest='wembedding_dims', default=128)
     parser.add_option('--cembedding', type='int', dest='cembedding_dims', help='size of character embeddings',
                       default=30)
@@ -229,20 +231,20 @@ class Tagger:
         pos_tags, _ = self.viterbi_decoding(observations,self.tag_transitions,self.vt.w2i, self.ntags)
         return [self.vt.i2w[t] for t in pos_tags]
 
-    def train(self):
+    def train(self, dev_data):
         tagged, loss = 0,0
         best_dev = float('-inf')
         for ITER in xrange(self.options.epochs):
             print 'ITER', ITER
-            random.shuffle(train)
+            random.shuffle(train_data)
             batch = []
-            for i, s in enumerate(train, 1):
+            for i, s in enumerate(train_data, 1):
                 if i % 1000 == 0:
                     self.trainer.status()
                     print loss / tagged
                     loss = 0
                     tagged = 0
-                    best_dev = self.validate(best_dev)
+                    best_dev = self.validate(best_dev, dev_data)
                 ws = [self.vw.w2i.get(w, self.UNK_W) for w, p in s]
                 ps = [self.vt.w2i[t] for w, t in s]
                 batch.append((ws,ps))
@@ -259,30 +261,28 @@ class Tagger:
                     batch = []
             self.trainer.status()
             print loss / tagged
-            best_dev = self.validate(best_dev)
+            best_dev = self.validate(best_dev, dev_data)
         if not options.save_best or not options.dev_file:
             print 'Saving the final model'
             self.save(os.path.join(options.output, options.model))
 
-    def validate(self, best_dev):
-        dev = list(self.read(options.dev_file))
+    def validate(self, best_dev, dev_data):
         good_pos = bad_pos = 0.0
-        if options.save_best and options.dev_file:
-            for sent in dev:
-                pos_tags = self.tag_sent(sent)
-                gold_pos = [t for w, t in sent]
-                for gp, pp in zip(gold_pos, pos_tags):
-                    if gp == pp:
-                        good_pos += 1
-                    else:
-                        bad_pos += 1
-            res = good_pos / (good_pos + bad_pos)
-            if res > best_dev:
-                print 'dev accuracy (saving):', res
-                best_dev = res
-                self.save(os.path.join(options.output, options.model))
-            else:
-                print 'pos accuracy', res
+        for sent in dev_data:
+            pos_tags = self.tag_sent(sent)
+            gold_pos = [t for w, t in sent]
+            for gp, pp in zip(gold_pos, pos_tags):
+                if gp == pp:
+                    good_pos += 1
+                else:
+                    bad_pos += 1
+        res = good_pos / (good_pos + bad_pos)
+        if res > best_dev:
+            print 'dev accuracy (saving):', res
+            best_dev = res
+            self.save(os.path.join(options.output, options.model))
+        else:
+            print 'pos accuracy', res
         return best_dev
 
     def load(self, f):
@@ -294,13 +294,14 @@ class Tagger:
 if __name__ == '__main__':
     if options.conll_train != '' and options.output != '':
         if not os.path.isdir(options.output): os.mkdir(options.output)
-        train = list(Tagger.read(options.conll_train))
-        print 'load #sent:',len(train)
+        train_data = list(Tagger.read(options.conll_train))
+        dev_data = list(Tagger.read(options.dev_file))
+        print 'load #sent:',len(train_data)
         words = []
         tags = []
         chars = {' ','<s>','</s>'}
         wc = Counter()
-        for s in train:
+        for s in train_data:
             for w, p in s:
                 words.append(w)
                 tags.append(p)
@@ -315,7 +316,7 @@ if __name__ == '__main__':
         with open(os.path.join(options.output, options.params), 'w') as paramsfp:
             pickle.dump((words, tags, ch, options), paramsfp)
 
-        Tagger(options, words, tags, ch).train()
+        Tagger(options, words, tags, ch).train(dev_data)
 
         options.model = os.path.join(options.output,options.model)
         options.params = os.path.join(options.output,options.params)
