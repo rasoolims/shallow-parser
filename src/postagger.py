@@ -117,19 +117,8 @@ class Tagger:
                 sent.append((w, p, bio))
         if sent: yield  sent
 
-    @staticmethod
-    def read_tagged_file(fname):
-        for line in file(fname):
-            spl = line.strip().split()
-            sent = []
-            for s in spl:
-                w = s[:s.rfind('_')]
-                p = s[s.rfind('_')+1:]
-                sent.append((w,p,'_'))
-            yield sent
-
-    def build_pos_graph(self, sent_words, words, is_train):
-        input_lstm = self.get_lstm_features(is_train, sent_words, words, False)[0]
+    def build_graph(self, sent_words, words, is_train):
+        input_lstm = self.get_lstm_features(is_train, sent_words, words)
 
         O = parameter(self.tagO)
         probs = []
@@ -138,32 +127,21 @@ class Tagger:
             probs.append(score_t)
         return probs
 
-    def get_lstm_features(self, is_train, sent_words, words, is_chunking):
-        if is_chunking:
-            tag_lstm, char_lstms, wembs, evec = self.get_lstm_features(is_train, sent_words, words, False)
-            O = parameter(self.tagO)
-            tag_scores = []
-            for f in tag_lstm:
-                score_t = O * f
-                tag_scores.append(score_t)
-            inputs = [concatenate(filter(None, [wembs[i], evec[i], char_lstms[i][-1], softmax(tag_scores[i])])) for i in xrange(len(words))]
-            input_lstm = self.chunk_lstms.transduce(inputs)
-            return input_lstm,tag_scores
-        else:
-            char_lstms = []
-            for w in sent_words:
-                char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if (c in self.chars.w2i and not is_train) or (is_train and random.random() >= 0.001) else self.CE[self.chars.w2i[' ']] for c in ['<s>'] + list(w) + ['</s>']]))
-            wembs = [noise(self.WE[w], 0.1) if is_train else self.WE[w] for w in words]
-            evec = [self.extrn_lookup[self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[
-                1] if self.edim > 0 else None for w in words]
-            inputs = [concatenate(filter(None, [wembs[i], evec[i], char_lstms[i][-1]])) for i in xrange(len(words))]
-            if self.drop:
-                [dropout(inputs[i], self.dropout) for i in xrange(len(inputs))]
-            input_lstm = self.tag_lstms.transduce(inputs)
-            return input_lstm, char_lstms, wembs, evec
+    def get_lstm_features(self, is_train, sent_words, words):
+        char_lstms = []
+        for w in sent_words:
+            char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if (c in self.chars.w2i and not is_train) or (is_train and random.random() >= 0.001) else self.CE[self.chars.w2i[' ']] for c in ['<s>'] + list(w) + ['</s>']]))
+        wembs = [noise(self.WE[w], 0.1) if is_train else self.WE[w] for w in words]
+        evec = [self.extrn_lookup[self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[
+            1] if self.edim > 0 else None for w in words]
+        inputs = [concatenate(filter(None, [wembs[i], evec[i], char_lstms[i][-1]])) for i in xrange(len(words))]
+        if self.drop:
+            [dropout(inputs[i], self.dropout) for i in xrange(len(inputs))]
+        input_lstm = self.tag_lstms.transduce(inputs)
+        return input_lstm
 
     def pos_loss(self, sent_words, words, tags):
-        probs = self.build_pos_graph(sent_words, words, True)
+        probs = self.build_graph(sent_words, words, True)
         errs = []
         for i in xrange(len(tags)):
             err = -log(pick(probs[i], tags[i]))
@@ -237,7 +215,7 @@ class Tagger:
         return best_path, path_score
 
     def neg_log_loss(self, sent_words, words, labels):
-        observations = self.build_pos_graph(sent_words, words, True)
+        observations = self.build_graph(sent_words, words, True)
         gold_score = self.score_sentence(observations, labels, self.tag_transitions, self.vt.w2i)
         forward_score = self.forward(observations, self.ntags, self.tag_transitions, self.vt.w2i)
         return forward_score - gold_score
@@ -246,7 +224,7 @@ class Tagger:
         renew_cg()
         words = [w for w, p, bio in sent]
         ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in sent]
-        observations = self.build_pos_graph(words, ws, False)
+        observations = self.build_graph(words, ws, False)
         pos_tags, _ = self.viterbi_decoding(observations,self.tag_transitions,self.vt.w2i, self.ntags)
         return [bio for w, p, bio in sent],[self.vt.i2w[t] for t in pos_tags]
 
@@ -380,31 +358,4 @@ if __name__ == '__main__':
                 [output.append(' '.join([sent[i][0], pos_tags[i], bio_tags[i]])) for i in xrange(len(bio_tags))]
             writer.write('\n'.join(output))
             writer.write('\n\n')
-        print 'done!'
-
-    if options.inputs != None and options.params != '' and options.model != '':
-        print options.model, options.params, options.eval_format
-        print 'reading params'
-        with open(options.params, 'r') as paramsfp:
-            words, bio_tags, bios, ch, opt = pickle.load(paramsfp)
-        tagger = Tagger(opt, words, bio_tags, bios, ch)
-        print 'loading model'
-        print options.model
-        tagger.load(options.model)
-
-        inputs = options.inputs.strip().split(',')
-        for input in inputs:
-            print input
-            test = list(Tagger.read_tagged_file(input))
-            print 'loaded',len(test),'sentences!'
-            writer = codecs.open(input+options.ext, 'w')
-            for sent in test:
-                output = list()
-                bio_tags,pos_tags = tagger.tag_sent(sent)
-                if options.eval_format:
-                     [output.append(' '.join([sent[i][0], pos_tags[i][1], sent[i][2], bio_tags[i]])) for i in xrange(len(bio_tags))]
-                else:
-                    [output.append(' '.join([sent[i][0], pos_tags[i][1], bio_tags[i]])) for i in xrange(len(bio_tags))]
-                writer.write('\n'.join(output))
-                writer.write('\n\n')
         print 'done!'
