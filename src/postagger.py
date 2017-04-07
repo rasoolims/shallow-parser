@@ -49,18 +49,16 @@ dyparams.init()
 from dynet import *
 
 class Tagger:
-    def __init__(self, options, words, tags, bios, chars):
+    def __init__(self, options, words, tags, chars):
         self.options = options
         self.vw = util.Vocab.from_corpus([words])
-        self.vb = util.Vocab.from_corpus([bios])
         self.vt = util.Vocab.from_corpus([tags])
         self.UNK_W = self.vw.w2i['_UNK_']
         self.batch = options.batch
         self.nwords = self.vw.size()
         self.chars = util.Vocab.from_corpus([chars])
         self.ntags = self.vt.size()
-        self.nBios = self.vb.size()
-        print 'num of pos tags',self.ntags, 'num of bio tags',self.nBios
+        print 'num of pos tags',self.ntags
         self.model = Model()
         self.trainer = AdamTrainer(self.model)
         self.WE = self.model.add_lookup_parameters((self.nwords, options.wembedding_dims))
@@ -106,16 +104,14 @@ class Tagger:
 
     @staticmethod
     def read(fname):
-        sent = []
         for line in file(fname):
-            line = line.strip().split()
-            if not line:
-                if sent: yield sent
-                sent = []
-            else:
-                w, p, bio = line
-                sent.append((w, p, bio))
-        if sent: yield  sent
+            spl = line.strip().split()
+            sent = []
+            for s in spl:
+                w = s[:s.rfind('_')]
+                p = s[s.rfind('_')+1:]
+                sent.append((w,p))
+            yield sent
 
     def build_graph(self, sent_words, words, is_train):
         input_lstm = self.get_lstm_features(is_train, sent_words, words)
@@ -222,11 +218,11 @@ class Tagger:
 
     def tag_sent(self, sent):
         renew_cg()
-        words = [w for w, p, bio in sent]
-        ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in sent]
+        words = [w for w, p in sent]
+        ws = [self.vw.w2i.get(w, self.UNK_W) for w, p in sent]
         observations = self.build_graph(words, ws, False)
         pos_tags, _ = self.viterbi_decoding(observations,self.tag_transitions,self.vt.w2i, self.ntags)
-        return [bio for w, p, bio in sent],[self.vt.i2w[t] for t in pos_tags]
+        return [self.vt.i2w[t] for t in pos_tags]
 
     def train(self):
         tagged, loss = 0,0
@@ -241,17 +237,16 @@ class Tagger:
                     print loss / tagged
                     loss = 0
                     tagged = 0
-                    best_dev = self.validate(best_dev, ITER>=options.pos_epochs)
-                ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in s]
-                ps = [self.vt.w2i[t] for w, t, bio in s]
-                bs = [self.vb.w2i[bio] for w, p, bio in s]
-                batch.append((ws,ps,bs))
+                    best_dev = self.validate(best_dev)
+                ws = [self.vw.w2i.get(w, self.UNK_W) for w, p in s]
+                ps = [self.vt.w2i[t] for w, t in s]
+                batch.append((ws,ps))
                 tagged += len(ps)
 
                 if len(batch)>=self.batch:
                     for j in xrange(len(batch)):
-                        ws,ps,_ = batch[j]
-                        sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  ps)
+                        ws,ps = batch[j]
+                        sum_errs = self.neg_log_loss([w for w,_ in s], ws,  ps)
                         loss+= sum_errs.scalar_value()
                     sum_errs.backward()
                     self.trainer.update()
@@ -259,41 +254,30 @@ class Tagger:
                     batch = []
             self.trainer.status()
             print loss / tagged
-            best_dev = self.validate(best_dev, ITER>=options.pos_epochs)
+            best_dev = self.validate(best_dev)
         if not options.save_best or not options.dev_file:
             print 'Saving the final model'
             self.save(os.path.join(options.output, options.model))
 
-    def validate(self, best_dev, save=True):
+    def validate(self, best_dev):
         dev = list(self.read(options.dev_file))
-        good = bad = 0.0
         good_pos = bad_pos = 0.0
         if options.save_best and options.dev_file:
             for sent in dev:
-                bio_tags, pos_tags = self.tag_sent(sent)
-                gold_bois = [b for w, t, b in sent]
-                gold_pos = [t for w, t, b in sent]
-                for go, gp, gu, pp in zip(gold_bois, gold_pos, bio_tags, pos_tags):
-                    if go == gu:
-                        good += 1
-                    else:
-                        bad += 1
-
+                pos_tags = self.tag_sent(sent)
+                gold_pos = [t for w, t in sent]
+                for gp, pp in zip(gold_pos, pos_tags):
                     if gp == pp:
                         good_pos += 1
                     else:
                         bad_pos += 1
-            res = good / (good + bad)
-            pos_res = good_pos / (good_pos + bad_pos)
-            if save:
-                if res > best_dev:
-                    print 'dev accuracy (saving):', res, 'pos accuracy', pos_res
-                    best_dev = res
-                    self.save(os.path.join(options.output, options.model))
-                else:
-                    print 'dev accuracy:', res, 'pos accuracy', pos_res
+            res = good_pos / (good_pos + bad_pos)
+            if res > best_dev:
+                print 'dev accuracy (saving):', res, 'pos accuracy', res
+                best_dev = res
+                self.save(os.path.join(options.output, options.model))
             else:
-                print 'dev pos accuracy', pos_res
+                print 'pos accuracy', res
         return best_dev
 
     def load(self, f):
@@ -308,29 +292,25 @@ if __name__ == '__main__':
         train = list(Tagger.read(options.conll_train))
         print 'load #sent:',len(train)
         words = []
-        bio_tags = []
-        bios = []
+        tags = []
         chars = {' ','<s>','</s>'}
         wc = Counter()
         for s in train:
-            for w, p, bio in s:
+            for w, p in s:
                 words.append(w)
-                bio_tags.append(p)
-                bios.append(bio)
+                tags.append(p)
                 [chars.add(x) for x in list(w)]
                 wc[w] += 1
         words.append('_UNK_')
-        bios.append('_START_')
-        bios.append('_STOP_')
-        bio_tags.append('_START_')
-        bio_tags.append('_STOP_')
+        tags.append('_START_')
+        tags.append('_STOP_')
         ch = list(chars)
 
         print 'writing params file'
         with open(os.path.join(options.output, options.params), 'w') as paramsfp:
-            pickle.dump((words, bio_tags, bios, ch, options), paramsfp)
+            pickle.dump((words, tags, ch, options), paramsfp)
 
-        Tagger(options, words, bio_tags, bios, ch).train()
+        Tagger(options, words, tags, ch).train()
 
         options.model = os.path.join(options.output,options.model)
         options.params = os.path.join(options.output,options.params)
@@ -339,8 +319,8 @@ if __name__ == '__main__':
         print options.model, options.params, options.eval_format
         print 'reading params'
         with open(options.params, 'r') as paramsfp:
-            words, bio_tags, bios, ch, opt = pickle.load(paramsfp)
-        tagger = Tagger(opt, words, bio_tags, bios, ch)
+            words, tags, ch, opt = pickle.load(paramsfp)
+        tagger = Tagger(opt, words, tags, ch)
 
         print 'loading model'
         print options.model
@@ -351,11 +331,8 @@ if __name__ == '__main__':
         writer = codecs.open(options.outfile, 'w')
         for sent in test:
             output = list()
-            bio_tags,pos_tags = tagger.tag_sent(sent)
-            if options.eval_format:
-                 [output.append(' '.join([sent[i][0], pos_tags[i], sent[i][2], bio_tags[i]])) for i in xrange(len(bio_tags))]
-            else:
-                [output.append(' '.join([sent[i][0], pos_tags[i], bio_tags[i]])) for i in xrange(len(bio_tags))]
+            tags, pos_tags = tagger.tag_sent(sent)
+            [output.append((sent[i][0]+'_'+pos_tags[i])) for i in xrange(len(tags))]
             writer.write('\n'.join(output))
             writer.write('\n\n')
         print 'done!'
