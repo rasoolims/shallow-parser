@@ -51,8 +51,6 @@ from dynet import *
 class Tagger:
     def __init__(self, options, words, tags, bios, chars):
         self.options = options
-        self.activations = {'tanh': tanh, 'sigmoid': logistic, 'relu': rectify}
-        self.activation = self.activations[options.activation]
         self.vw = util.Vocab.from_corpus([words])
         self.vb = util.Vocab.from_corpus([bios])
         self.vt = util.Vocab.from_corpus([tags])
@@ -65,17 +63,11 @@ class Tagger:
         print 'num of pos tags',self.ntags, 'num of bio tags',self.nBios
         self.model = Model()
         self.trainer = AdamTrainer(self.model)
-
         self.WE = self.model.add_lookup_parameters((self.nwords, options.wembedding_dims))
         self.CE = self.model.add_lookup_parameters((self.chars.size(), options.cembedding_dims))
-        self.pH1 = self.model.add_parameters((options.hidden_units, options.lstm_dims)) if options.hidden_units > 0 else None
-        self.pH2 = self.model.add_parameters((options.hidden2_units, options.hidden_units)) if options.hidden2_units > 0 else None
-        hdim = options.hidden2_units if options.hidden2_units>0 else options.hidden_units if options.hidden_units>0 else options.lstm_dims
-        self.pO = self.model.add_parameters((self.nBios, hdim))
         self.k = options.k
         self.drop = options.drop
         self.dropout = options.dropout
-        self.transitions = self.model.add_lookup_parameters((self.nBios, self.nBios))
         self.tag_transitions = self.model.add_lookup_parameters((self.ntags, self.ntags))
         self.edim = 0
         self.external_embedding = None
@@ -108,8 +100,6 @@ class Tagger:
             print 'Loaded external embedding. Vector dimensions:', self.edim
 
         tag_inp_dim = options.wembedding_dims + self.edim + options.clstm_dims
-        inp_dim = tag_inp_dim + self.ntags
-        self.chunk_lstms = BiRNNBuilder(self.k, inp_dim, options.lstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
         self.tag_lstms = BiRNNBuilder(self.k, tag_inp_dim, options.tag_lstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
         self.char_lstms = BiRNNBuilder(1, options.cembedding_dims, options.clstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
         self.tagO = self.model.add_parameters((self.ntags, options.tag_lstm_dims))
@@ -180,18 +170,6 @@ class Tagger:
             errs.append(err)
         return errs
 
-    def build_tagging_graph(self, sent_words, words, is_train):
-        input_lstm,pos_probs = self.get_lstm_features(is_train, sent_words, words, True)
-        H1 = parameter(self.pH1) if self.pH1!=None else None
-        H2 = parameter(self.pH2) if self.pH2!=None else None
-        O = parameter(self.pO)
-        scores = []
-
-        for f in input_lstm:
-            score_t = O*(self.activation(H2*self.activation(H1 * f))) if H2!=None else O * (self.activation(H1 * f)) if self.pH1!=None  else O*f
-            scores.append(score_t)
-        return scores,pos_probs
-
     def score_sentence(self, observations, labels, trans_matrix, dct):
         assert len(observations) == len(labels)
         score_seq = [0]
@@ -258,29 +236,19 @@ class Tagger:
         # Return best path and best path's score
         return best_path, path_score
 
-    def neg_log_loss(self, sent_words, words, labels, is_chunking):
-        observations = self.build_tagging_graph(sent_words, words, True)[0] if is_chunking else self.build_pos_graph(sent_words, words, True)
-        gold_score = self.score_sentence(observations, labels, self.transitions if is_chunking else self.tag_transitions, self.vb.w2i if is_chunking else self.vt.w2i)
-        forward_score = self.forward(observations, self.nBios if is_chunking else self.ntags, self.transitions if is_chunking else self.tag_transitions, self.vb.w2i if is_chunking else self.vt.w2i)
+    def neg_log_loss(self, sent_words, words, labels):
+        observations = self.build_pos_graph(sent_words, words, True)
+        gold_score = self.score_sentence(observations, labels, self.tag_transitions, self.vt.w2i)
+        forward_score = self.forward(observations, self.ntags, self.tag_transitions, self.vt.w2i)
         return forward_score - gold_score
-
-    def viterbi_loss(self,  sent_words,words,tags, bios):
-        observations = self.build_tagging_graph(sent_words,words,tags, True)[0]
-        viterbi_tags, viterbi_score = self.viterbi_decoding(observations,self.transitions,self.vb.w2i, self.nBios)
-        if viterbi_tags != bios:
-            gold_score = self.score_sentence(observations, bios, self.transitions, self.vb.w2i)
-            return (viterbi_score - gold_score), viterbi_tags
-        else:
-            return dy.scalarInput(0), viterbi_tags
 
     def tag_sent(self, sent):
         renew_cg()
         words = [w for w, p, bio in sent]
         ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in sent]
-        observations,tag_scores = self.build_tagging_graph(words, ws, False)
-        bios, score = self.viterbi_decoding(observations,self.transitions,self.vb.w2i, self.nBios)
-        pos_tags, _ = self.viterbi_decoding(tag_scores,self.tag_transitions,self.vt.w2i, self.ntags)
-        return [self.vb.i2w[b] for b in bios],[self.vt.i2w[t] for t in pos_tags]
+        observations = self.build_pos_graph(words, ws, False)
+        pos_tags, _ = self.viterbi_decoding(observations,self.tag_transitions,self.vt.w2i, self.ntags)
+        return [bio for w, p, bio in sent],[self.vt.i2w[t] for t in pos_tags]
 
     def train(self):
         tagged, loss = 0,0
@@ -303,22 +271,13 @@ class Tagger:
                 tagged += len(ps)
 
                 if len(batch)>=self.batch:
-                    if ITER < options.pos_epochs:
-                        for j in xrange(len(batch)):
-                            ws,ps,_ = batch[j]
-                            sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  ps, False)
-                            loss+= sum_errs.scalar_value()
-                        sum_errs.backward()
-                        self.trainer.update()
-                        renew_cg()
-                    else:
-                        for j in xrange(len(batch)):
-                            ws,_,bs = batch[j]
-                            sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  bs, True)
-                            loss += sum_errs.scalar_value()
-                        sum_errs.backward()
-                        self.trainer.update()
-                        renew_cg()
+                    for j in xrange(len(batch)):
+                        ws,ps,_ = batch[j]
+                        sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  ps)
+                        loss+= sum_errs.scalar_value()
+                    sum_errs.backward()
+                    self.trainer.update()
+                    renew_cg()
                     batch = []
             self.trainer.status()
             print loss / tagged
