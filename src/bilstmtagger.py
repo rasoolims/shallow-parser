@@ -1,9 +1,5 @@
 from postagger import  *
 
-#todo add pos embeddings and see the effect.
-#todo trying to initialize layers with tagger.
-#todo try dependency-based bio tags.
-
 class Chunker(Tagger):
     def __init__(self, options, words, tags, bios, chars, pos_tagger):
         Tagger.__init__(self, options, words, tags, chars)
@@ -15,13 +11,14 @@ class Chunker(Tagger):
         self.nBios = self.vb.size()
         print  'num of bio tags',self.nBios
 
+        self.PE = self.model.add_lookup_parameters((self.ntags, options.pembedding_dims))
         self.H1 = self.model.add_parameters((options.hidden_units, options.lstm_dims)) if options.hidden_units > 0 else None
         self.H2 = self.model.add_parameters((options.hidden2_units, options.hidden_units)) if options.hidden2_units > 0 else None
         hdim = options.hidden2_units if options.hidden2_units>0 else options.hidden_units if options.hidden_units>0 else options.lstm_dims
         self.O = self.model.add_parameters((self.nBios, hdim))
         self.transitions = self.model.add_lookup_parameters((self.nBios, self.nBios))
 
-        inp_dim = options.wembedding_dims + self.edim + options.clstm_dims + self.ntags
+        inp_dim = options.wembedding_dims + self.edim + options.clstm_dims + self.ntags + options.pembedding_dims
         self.chunk_lstms = BiRNNBuilder(self.k, inp_dim, options.lstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
 
     def init_pos_tagger(self):
@@ -29,9 +26,6 @@ class Chunker(Tagger):
             self.WE.init_row(i, self.pos_tagger.WE[i].npvalue())
         for i in xrange(self.chars.size()):
             self.CE.init_row(i, self.pos_tagger.CE[i].npvalue())
-        #todo try to initialize layers as well
-        self.char_lstms = self.pos_tagger.char_lstms
-        self.tag_lstms = self.pos_tagger.tag_lstms
 
     @staticmethod
     def read(fname):
@@ -47,27 +41,20 @@ class Chunker(Tagger):
         if sent: yield  sent
 
 
-    def get_chunk_lstm_features(self, is_train, sent_words, words):
+    def get_chunk_lstm_features(self, is_train, sent_words, words,auto_tags):
         tag_lstm, char_lstms, wembs, evec = self.get_pos_lstm_features(is_train, sent_words, words)
+        pembs = [noise(self.PE[p], 0.001) if is_train else self.PE[p] for p in auto_tags]
         O = parameter(self.tagO)
         tag_scores = []
         for f in tag_lstm:
             score_t = O * f
             tag_scores.append(score_t)
-        inputs = [concatenate(filter(None, [wembs[i], evec[i], char_lstms[i][-1], softmax(tag_scores[i])])) for i in xrange(len(words))]
+        inputs = [concatenate(filter(None, [wembs[i], evec[i], char_lstms[i][-1], softmax(tag_scores[i]), pembs[i]])) for i in xrange(len(words))]
         input_lstm = self.chunk_lstms.transduce(inputs)
         return input_lstm
 
-    def pos_loss(self, sent_words, words, tags):
-        probs = self.build_pos_graph(sent_words, words, True)
-        errs = []
-        for i in xrange(len(tags)):
-            err = -log(pick(probs[i], tags[i]))
-            errs.append(err)
-        return errs
-
-    def build_graph(self, sent_words, words, is_train):
-        input_lstm = self.get_chunk_lstm_features(is_train, sent_words, words)
+    def build_graph(self, sent_words, words, auto_tags, is_train):
+        input_lstm = self.get_chunk_lstm_features(is_train, sent_words, words, auto_tags)
         H1 = parameter(self.H1) if self.H1 != None else None
         H2 = parameter(self.H2) if self.H2 != None else None
         O = parameter(self.O)
@@ -78,8 +65,8 @@ class Chunker(Tagger):
             scores.append(score_t)
         return scores
 
-    def neg_log_loss(self, sent_words, words, labels):
-        observations = self.build_graph(sent_words, words, True)
+    def neg_log_loss(self, sent_words, words, labels, auto_tags):
+        observations = self.build_graph(sent_words, words, auto_tags, True)
         gold_score = self.score_sentence(observations, labels, self.transitions, self.vb.w2i)
         forward_score = self.forward(observations, self.nBios, self.transitions, self.vb.w2i)
         return forward_score - gold_score
@@ -88,12 +75,10 @@ class Chunker(Tagger):
         renew_cg()
         words = [w for w, p, bio in sent]
         ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in sent]
-        p_ws = [self.pos_tagger.vw.w2i.get(w, self.pos_tagger.UNK_W) for w, p, bio in sent]
-        observations = self.build_graph(words, ws, False)
+        auto_tags = self.pos_tagger.best_pos_tags(words)
+        observations = self.build_graph(words, ws, auto_tags, False)
         bios, score = self.viterbi_decoding(observations,self.transitions,self.vb.w2i, self.nBios)
-        tag_scores = self.pos_tagger.build_pos_graph(words, p_ws, False)
-        pos_tags, _ = self.pos_tagger.viterbi_decoding(tag_scores,self.pos_tagger.tag_transitions,self.pos_tagger.vt.w2i, self.pos_tagger.ntags)
-        return [self.vb.i2w[b] for b in bios],[self.pos_tagger.vt.i2w[t] for t in pos_tags]
+        return [self.vb.i2w[b] for b in bios],[self.pos_tagger.vt.i2w[p] for p in auto_tags]
 
     def train(self):
         tagged, loss = 0,0
@@ -111,17 +96,18 @@ class Chunker(Tagger):
                     if ITER >= self.options.pos_epochs: best_dev = self.validate(best_dev)
                 ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in s]
                 ps = [self.vt.w2i[t] for w, t, bio in s]
+                auto_tags = self.pos_tagger.best_pos_tags([w for w, p, bio in s])
                 bs = [self.vb.w2i[bio] for w, p, bio in s]
-                batch.append((ws,ps,bs))
+                batch.append(([w for w,_,_ in s],ws,ps,bs,auto_tags))
                 tagged += len(ps)
 
                 if len(batch)>=self.batch:
                     for j in xrange(len(batch)):
-                        ws,ps,bs = batch[j]
+                        sent_words,ws,ps,bs,at = batch[j]
                         if ITER < self.options.pos_epochs:
-                            sum_errs = self.pos_neg_log_loss([w for w,_,_ in s], ws,  ps)
+                            sum_errs = self.pos_neg_log_loss(sent_words, ws,  ps)
                         else:
-                            sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  bs)
+                            sum_errs = self.neg_log_loss(sent_words, ws,  bs,auto_tags)
                         loss += sum_errs.scalar_value()
                     sum_errs.backward()
                     self.trainer.update()
