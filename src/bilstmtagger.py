@@ -102,13 +102,15 @@ class Chunker(Tagger):
                 tagged += len(ps)
 
                 if len(batch)>=self.batch:
+                    errs = []
                     for j in xrange(len(batch)):
                         sent_words,ws,ps,bs,at = batch[j]
                         if ITER < self.options.pos_epochs:
-                            sum_errs = self.pos_neg_log_loss(sent_words, ws,  ps)
+                            errs.append(self.pos_neg_log_loss(sent_words, ws,  ps))
                         else:
-                            sum_errs = self.neg_log_loss(sent_words, ws,  bs,auto_tags)
-                        loss += sum_errs.scalar_value()
+                            errs.append(self.neg_log_loss(sent_words, ws,  bs, at))
+                    sum_errs = esum(errs)
+                    loss += sum_errs.scalar_value()
                     sum_errs.backward()
                     self.trainer.update()
                     renew_cg()

@@ -244,10 +244,12 @@ class Tagger:
                 tagged += len(ps)
 
                 if len(batch)>=self.batch:
+                    errs = []
                     for j in xrange(len(batch)):
                         ws,ps = batch[j]
-                        sum_errs = self.pos_neg_log_loss([w for w, _ in s], ws, ps)
-                        loss+= sum_errs.scalar_value()
+                        errs.append(self.pos_neg_log_loss([w for w, _ in s], ws, ps))
+                    sum_errs = esum(errs)
+                    loss+= sum_errs.scalar_value()
                     sum_errs.backward()
                     self.trainer.update()
                     renew_cg()
