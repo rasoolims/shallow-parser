@@ -21,7 +21,8 @@ def parse_options():
     parser.add_option('--wembedding', type='int', dest='wembedding_dims', default=128)
     parser.add_option('--cembedding', type='int', dest='cembedding_dims', help='size of character embeddings', default=30)
     parser.add_option('--pembedding', type='int', dest='pembedding_dims', default=30)
-    parser.add_option('--epochs', type='int', dest='epochs', default=5)
+    parser.add_option('--epochs', type='int', dest='epochs', default=10)
+    parser.add_option('--pos_epochs', type='int', dest='pos_epochs', default=3)
     parser.add_option('--hidden', type='int', dest='hidden_units', default=200)
     parser.add_option('--hidden2', type='int', dest='hidden2_units', default=0)
     parser.add_option('--lstmdims', type='int', dest='lstm_dims', default=200)
@@ -118,8 +119,8 @@ class Tagger:
         for line in file(fname):
             yield line.strip().split()
 
-    def build_graph(self, sent_words, words, is_train):
-        input_lstm = self.get_lstm_features(is_train, sent_words, words)
+    def build_pos_graph(self, sent_words, words, is_train):
+        input_lstm = self.get_pos_lstm_features(is_train, sent_words, words)[0]
 
         O = parameter(self.tagO)
         scores = []
@@ -128,7 +129,7 @@ class Tagger:
             scores.append(score_t)
         return scores
 
-    def get_lstm_features(self, is_train, sent_words, words):
+    def get_pos_lstm_features(self, is_train, sent_words, words):
         char_lstms = []
         for w in sent_words:
             char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if (c in self.chars.w2i and not is_train) or (is_train and random.random() >= 0.001) else self.CE[self.chars.w2i[' ']] for c in ['<s>'] + list(w) + ['</s>']]))
@@ -139,15 +140,7 @@ class Tagger:
         if self.drop:
             [dropout(inputs[i], self.dropout) for i in xrange(len(inputs))]
         input_lstm = self.tag_lstms.transduce(inputs)
-        return input_lstm
-
-    def pos_loss(self, sent_words, words, tags):
-        probs = self.build_graph(sent_words, words, True)
-        errs = []
-        for i in xrange(len(tags)):
-            err = -log(pick(probs[i], tags[i]))
-            errs.append(err)
-        return errs
+        return input_lstm, char_lstms, wembs, evec
 
     def score_sentence(self, observations, labels, trans_matrix, dct):
         assert len(observations) == len(labels)
@@ -215,8 +208,8 @@ class Tagger:
         # Return best path and best path's score
         return best_path, path_score
 
-    def neg_log_loss(self, sent_words, words, labels):
-        observations = self.build_graph(sent_words, words, True)
+    def pos_neg_log_loss(self, sent_words, words, labels):
+        observations = self.build_pos_graph(sent_words, words, True)
         gold_score = self.score_sentence(observations, labels, self.tag_transitions, self.vt.w2i)
         forward_score = self.forward(observations, self.ntags, self.tag_transitions, self.vt.w2i)
         return forward_score - gold_score
@@ -225,7 +218,7 @@ class Tagger:
         renew_cg()
         words = [w for w, p in sent]
         ws = [self.vw.w2i.get(w, self.UNK_W) for w, p in sent]
-        observations = self.build_graph(words, ws, False)
+        observations = self.build_pos_graph(words, ws, False)
         pos_tags, _ = self.viterbi_decoding(observations,self.tag_transitions,self.vt.w2i, self.ntags)
         return [self.vt.i2w[t] for t in pos_tags]
 
@@ -251,7 +244,7 @@ class Tagger:
                 if len(batch)>=self.batch:
                     for j in xrange(len(batch)):
                         ws,ps = batch[j]
-                        sum_errs = self.neg_log_loss([w for w,_ in s], ws,  ps)
+                        sum_errs = self.pos_neg_log_loss([w for w, _ in s], ws, ps)
                         loss+= sum_errs.scalar_value()
                     sum_errs.backward()
                     self.trainer.update()

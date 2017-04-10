@@ -46,39 +46,17 @@ class Chunker(Tagger):
                 sent.append((w, p, bio))
         if sent: yield  sent
 
-    def build_pos_graph(self, sent_words, words, is_train):
-        input_lstm = self.get_lstm_features(is_train, sent_words, words, False)
 
+    def get_chunk_lstm_features(self, is_train, sent_words, words):
+        tag_lstm, char_lstms, wembs, evec = self.get_pos_lstm_features(is_train, sent_words, words)
         O = parameter(self.tagO)
-        probs = []
-        for f in input_lstm:
-            score_t = O*f
-            probs.append(score_t)
-        return probs
-
-    def get_lstm_features(self, is_train, sent_words, words, is_chunking):
-        if is_chunking:
-            tag_lstm, char_lstms, wembs, evec = self.get_lstm_features(is_train, sent_words, words, False)
-            O = parameter(self.tagO)
-            tag_scores = []
-            for f in tag_lstm:
-                score_t = O * f
-                tag_scores.append(score_t)
-            inputs = [concatenate(filter(None, [wembs[i], evec[i], char_lstms[i][-1], softmax(tag_scores[i])])) for i in xrange(len(words))]
-            input_lstm = self.chunk_lstms.transduce(inputs)
-            return input_lstm
-        else:
-            char_lstms = []
-            for w in sent_words:
-                char_lstms.append(self.char_lstms.transduce([self.CE[self.chars.w2i[c]] if (c in self.chars.w2i and not is_train) or (is_train and random.random() >= 0.001) else self.CE[self.chars.w2i[' ']] for c in ['<s>'] + list(w) + ['</s>']]))
-            wembs = [noise(self.WE[w], 0.1) if is_train else self.WE[w] for w in words]
-            evec = [self.extrn_lookup[self.extrnd[w]] if self.edim > 0 and w in self.extrnd else self.extrn_lookup[
-                1] if self.edim > 0 else None for w in words]
-            inputs = [concatenate(filter(None, [wembs[i], evec[i], char_lstms[i][-1]])) for i in xrange(len(words))]
-            if self.drop:
-                [dropout(inputs[i], self.dropout) for i in xrange(len(inputs))]
-            input_lstm = self.tag_lstms.transduce(inputs)
-            return input_lstm, char_lstms, wembs, evec
+        tag_scores = []
+        for f in tag_lstm:
+            score_t = O * f
+            tag_scores.append(score_t)
+        inputs = [concatenate(filter(None, [wembs[i], evec[i], char_lstms[i][-1], softmax(tag_scores[i])])) for i in xrange(len(words))]
+        input_lstm = self.chunk_lstms.transduce(inputs)
+        return input_lstm
 
     def pos_loss(self, sent_words, words, tags):
         probs = self.build_pos_graph(sent_words, words, True)
@@ -89,7 +67,7 @@ class Chunker(Tagger):
         return errs
 
     def build_graph(self, sent_words, words, is_train):
-        input_lstm = self.get_lstm_features(is_train, sent_words, words, True)
+        input_lstm = self.get_chunk_lstm_features(is_train, sent_words, words)
         H1 = parameter(self.H1) if self.H1 != None else None
         H2 = parameter(self.H2) if self.H2 != None else None
         O = parameter(self.O)
@@ -113,7 +91,7 @@ class Chunker(Tagger):
         p_ws = [self.pos_tagger.vw.w2i.get(w, self.pos_tagger.UNK_W) for w, p, bio in sent]
         observations = self.build_graph(words, ws, False)
         bios, score = self.viterbi_decoding(observations,self.transitions,self.vb.w2i, self.nBios)
-        tag_scores = self.pos_tagger.build_graph(words, p_ws, False)
+        tag_scores = self.pos_tagger.build_pos_graph(words, p_ws, False)
         pos_tags, _ = self.pos_tagger.viterbi_decoding(tag_scores,self.pos_tagger.tag_transitions,self.pos_tagger.vt.w2i, self.pos_tagger.ntags)
         return [self.vb.i2w[b] for b in bios],[self.pos_tagger.vt.i2w[t] for t in pos_tags]
 
@@ -130,7 +108,7 @@ class Chunker(Tagger):
                     print loss / tagged
                     loss = 0
                     tagged = 0
-                    best_dev = self.validate(best_dev)
+                    if ITER >= self.options.pos_epochs: best_dev = self.validate(best_dev)
                 ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in s]
                 ps = [self.vt.w2i[t] for w, t, bio in s]
                 bs = [self.vb.w2i[bio] for w, p, bio in s]
@@ -139,8 +117,11 @@ class Chunker(Tagger):
 
                 if len(batch)>=self.batch:
                     for j in xrange(len(batch)):
-                        ws,_,bs = batch[j]
-                        sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  bs)
+                        ws,ps,bs = batch[j]
+                        if ITER < self.options.pos_epochs:
+                            sum_errs = self.pos_neg_log_loss([w for w,_,_ in s], ws,  ps)
+                        else:
+                            sum_errs = self.neg_log_loss([w for w,_,_ in s], ws,  bs)
                         loss += sum_errs.scalar_value()
                     sum_errs.backward()
                     self.trainer.update()
@@ -148,7 +129,7 @@ class Chunker(Tagger):
                     batch = []
             self.trainer.status()
             print loss / tagged
-            best_dev = self.validate(best_dev)
+            if ITER >= self.options.pos_epochs: best_dev = self.validate(best_dev)
         if not options.save_best or not options.dev_file:
             print 'Saving the final model'
             self.save(os.path.join(options.output, options.model))
