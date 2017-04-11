@@ -99,7 +99,7 @@ class Tagger:
             print 'Loaded external embedding. Vector dimensions:', self.edim
 
         tag_inp_dim = options.wembedding_dims + self.edim + options.clstm_dims
-        self.tag_lstms = BiRNNBuilder(self.k, tag_inp_dim, options.tag_lstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
+        self.tag_lstms = BiRNNBuilder(1, tag_inp_dim, options.tag_lstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
         self.char_lstms = BiRNNBuilder(1, options.cembedding_dims, options.clstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
         self.tagO = self.model.add_parameters((self.ntags, options.tag_lstm_dims))
 
