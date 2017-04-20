@@ -151,7 +151,6 @@ class Chunker(Tagger):
                 print 'dev accuracy:', res, 'pos accuracy', pos_res
         return best_dev
 
-
 if __name__ == '__main__':
     print 'reading pos tagger'
     with open(options.pos_params, 'r') as paramsfp:

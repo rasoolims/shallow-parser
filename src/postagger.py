@@ -1,5 +1,5 @@
 from collections import Counter
-import random,os,codecs,pickle,time
+import random,os,codecs,pickle,gzip
 from optparse import OptionParser
 import numpy as np
 
@@ -71,7 +71,7 @@ class Tagger:
         self.tag_transitions = self.model.add_lookup_parameters((self.ntags, self.ntags))
         self.edim = 0
         if options.initial_embeddings is not None:
-            initial_embeddings_fp = open(options.initial_embeddings, 'r')
+            initial_embeddings_fp = gzip.open(options.initial_embeddings, 'r')
             initial_embeddings_fp.readline()
             initial_embeddings_vec = {line.split(' ')[0]: [float(f) for f in line.strip().split(' ')[1:]] for line in
                                        initial_embeddings_fp}
@@ -81,7 +81,7 @@ class Tagger:
                    assert options.wembedding_dims == len(initial_embeddings_vec[word])
                    self.WE.init_row(self.vw.w2i.get(word), initial_embeddings_vec[word])
         if options.external_embedding is not None:
-            external_embedding_fp = open(options.external_embedding, 'r')
+            external_embedding_fp = gzip.open(options.external_embedding, 'r')
             external_embedding_fp.readline()
             external_embedding = {line.split(' ')[0]: [float(f) for f in line.strip().split(' ')[1:]] for line in
                                        external_embedding_fp}
