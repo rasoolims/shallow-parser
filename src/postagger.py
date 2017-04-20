@@ -240,7 +240,7 @@ class Tagger:
                     best_dev = self.validate(best_dev, dev_data)
                 ws = [self.vw.w2i.get(w, self.UNK_W) for w, p in s]
                 ps = [self.vt.w2i[t] for w, t in s]
-                batch.append(([w for w,_,_ in s],ws,ps))
+                batch.append(([w for w,_ in s],ws,ps))
                 tagged += len(ps)
 
                 if len(batch)>=self.batch:
