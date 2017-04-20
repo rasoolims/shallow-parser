@@ -240,14 +240,14 @@ class Tagger:
                     best_dev = self.validate(best_dev, dev_data)
                 ws = [self.vw.w2i.get(w, self.UNK_W) for w, p in s]
                 ps = [self.vt.w2i[t] for w, t in s]
-                batch.append((ws,ps))
+                batch.append(([w for w,_,_ in s],ws,ps))
                 tagged += len(ps)
 
                 if len(batch)>=self.batch:
                     errs = []
                     for j in xrange(len(batch)):
-                        ws,ps = batch[j]
-                        errs.append(self.pos_neg_log_loss([w for w, _ in s], ws, ps))
+                        sent_words,ws,ps = batch[j]
+                        errs.append(self.pos_neg_log_loss(sent_words, ws,  ps))
                     sum_errs = esum(errs)
                     loss+= sum_errs.scalar_value()
                     sum_errs.backward()
