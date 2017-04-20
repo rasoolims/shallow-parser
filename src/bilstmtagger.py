@@ -10,14 +10,12 @@ class Chunker(Tagger):
         self.vb = util.Vocab.from_corpus([bios])
         self.nBios = self.vb.size()
         print  'num of bio tags',self.nBios
-
         self.PE = self.model.add_lookup_parameters((self.ntags, options.pembedding_dims))
         self.H1 = self.model.add_parameters((options.hidden_units, options.lstm_dims)) if options.hidden_units > 0 else None
         self.H2 = self.model.add_parameters((options.hidden2_units, options.hidden_units)) if options.hidden2_units > 0 else None
         hdim = options.hidden2_units if options.hidden2_units>0 else options.hidden_units if options.hidden_units>0 else options.lstm_dims
         self.O = self.model.add_parameters((self.nBios, hdim))
         self.transitions = self.model.add_lookup_parameters((self.nBios, self.nBios))
-
         inp_dim = options.wembedding_dims + self.edim + options.clstm_dims + self.ntags + options.pembedding_dims
         self.chunk_lstms = BiRNNBuilder(self.k, inp_dim, options.lstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
 
@@ -26,6 +24,7 @@ class Chunker(Tagger):
             self.WE.init_row(i, self.pos_tagger.WE[i].npvalue())
         for i in xrange(self.chars.size()):
             self.CE.init_row(i, self.pos_tagger.CE[i].npvalue())
+
 
     @staticmethod
     def read(fname):
@@ -39,7 +38,6 @@ class Chunker(Tagger):
                 w, p, bio = line
                 sent.append((w, p, bio))
         if sent: yield  sent
-
 
     def get_chunk_lstm_features(self, is_train, sent_words, words,auto_tags):
         tag_lstm, char_lstms, wembs, evec = self.get_pos_lstm_features(is_train, sent_words, words)
@@ -83,6 +81,7 @@ class Chunker(Tagger):
     def train(self):
         tagged, loss = 0,0
         best_dev = float('-inf')
+        batch = 0
         for ITER in xrange(self.options.epochs):
             print 'ITER', ITER
             random.shuffle(train)
@@ -100,6 +99,7 @@ class Chunker(Tagger):
                 bs = [self.vb.w2i[bio] for w, p, bio in s]
                 batch.append(([w for w,_,_ in s],ws,ps,bs,auto_tags))
                 tagged += len(ps)
+
 
                 if len(batch)>=self.batch:
                     errs = []
@@ -150,6 +150,7 @@ class Chunker(Tagger):
             else:
                 print 'dev accuracy:', res, 'pos accuracy', pos_res
         return best_dev
+
 
 if __name__ == '__main__':
     print 'reading pos tagger'
