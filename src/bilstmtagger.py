@@ -39,7 +39,7 @@ class Chunker(Tagger):
                 sent.append((w, p, bio))
         if sent: yield  sent
 
-    def forward(self, observations, ntags, trans_matrix, dct):
+    def forward_semi(self, observations, ntags, trans_matrix, dct):
         def log_sum_exp(scores):
             npval = scores.npvalue()
             argmax_score = np.argmax(npval)
@@ -60,7 +60,7 @@ class Chunker(Tagger):
         terminal_expr = for_expr + trans_matrix[dct['_STOP_']]
         alpha = log_sum_exp(terminal_expr)
         return alpha
-    
+
     def get_chunk_lstm_features(self, is_train, sent_words, words,auto_tags):
         tag_lstm, char_lstms, wembs, evec = self.get_pos_lstm_features(is_train, sent_words, words)
         pembs = [noise(self.PE[p], 0.001) if is_train else self.PE[p] for p in auto_tags]
@@ -88,7 +88,7 @@ class Chunker(Tagger):
     def neg_log_loss(self, sent_words, words, labels, auto_tags):
         observations = self.build_graph(sent_words, words, auto_tags, True)
         gold_score = self.score_sentence(observations, labels, self.transitions, self.vb.w2i)
-        forward_score = self.forward(observations, self.nBios, self.transitions, self.vb.w2i)
+        forward_score = self.forward_semi(observations, self.nBios, self.transitions, self.vb.w2i)
         return forward_score - gold_score
 
     def tag_sent(self, sent):
