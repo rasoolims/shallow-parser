@@ -1,21 +1,20 @@
 from postagger import  *
 
 class Chunker(Tagger):
-    def __init__(self, options, words, tags, bios, chars, pos_tagger):
+    def __init__(self, options, words, tags, labels, chars, pos_tagger):
         Tagger.__init__(self, options, words, tags, chars)
         self.pos_tagger = pos_tagger
         if options.tag_init: self.init_pos_tagger()
         self.activations = {'tanh': tanh, 'sigmoid': logistic, 'relu': rectify}
         self.activation = self.activations[options.activation]
-        self.vb = util.Vocab.from_corpus([bios])
-        self.nBios = self.vb.size()
-        print  'num of bio tags',self.nBios
+        self.vl = util.Vocab.from_corpus([labels]) # no-bio tags
+        self.nLabels = self.vl.size()
         self.PE = self.model.add_lookup_parameters((self.ntags, options.pembedding_dims))
         self.H1 = self.model.add_parameters((options.hidden_units, options.lstm_dims)) if options.hidden_units > 0 else None
         self.H2 = self.model.add_parameters((options.hidden2_units, options.hidden_units)) if options.hidden2_units > 0 else None
         hdim = options.hidden2_units if options.hidden2_units>0 else options.hidden_units if options.hidden_units>0 else options.lstm_dims
-        self.O = self.model.add_parameters((self.nBios, hdim))
-        self.transitions = self.model.add_lookup_parameters((self.nBios, self.nBios))
+        self.O = self.model.add_parameters((self.nLabels, hdim))
+        self.transitions = self.model.add_lookup_parameters((self.nLabels, self.nLabels))
         inp_dim = options.wembedding_dims + self.edim + options.clstm_dims + self.ntags + options.pembedding_dims
         self.chunk_lstms = BiRNNBuilder(self.k, inp_dim, options.lstm_dims, self.model, LSTMBuilder if not options.gru else GRUBuilder)
 
@@ -50,13 +49,18 @@ class Chunker(Tagger):
         init_alphas = [-1e10] * ntags
         init_alphas[dct['_START_']] = 0
         for_expr = inputVector(init_alphas)
-        for obs in observations:
-            alphas_t = []
-            for next_tag in range(ntags):
-                obs_broadcast = concatenate([pick(obs, next_tag)] * ntags)
-                next_tag_expr = for_expr + trans_matrix[next_tag] + obs_broadcast
-                alphas_t.append(log_sum_exp(next_tag_expr))
-            for_expr = concatenate(alphas_t)
+
+        for i in xrange(len(observations)):
+            fes = []
+            for k in xrange(len(observations)-i):
+                feat = observations[k] - observations[i-1] if i>=0 else observations[k]
+                alphas_t = []
+                for next_tag in range(ntags):
+                    obs_broadcast = concatenate([pick(feat, next_tag)] * ntags)
+                    next_tag_expr = for_expr + trans_matrix[next_tag] + obs_broadcast
+                    alphas_t.append(log_sum_exp(next_tag_expr))
+                    fes.append(concatenate(alphas_t))
+            for_expr = sum_cols(fes)
         terminal_expr = for_expr + trans_matrix[dct['_STOP_']]
         alpha = log_sum_exp(terminal_expr)
         return alpha
@@ -73,6 +77,39 @@ class Chunker(Tagger):
         input_lstm = self.chunk_lstms.transduce(inputs)
         return input_lstm
 
+    def viterbi_decoding_semi(self, observations, trans_matrix, dct, nL):
+        backpointers = []
+        init_vvars   = [-1e10] * nL
+        init_vvars[dct['_START_']] = 0 # <Start> has all the probability
+        for_expr = inputVector(init_vvars)
+        trans_exprs  = [trans_matrix[idx] for idx in range(nL)]
+        for obs in observations:
+            bptrs_t = []
+            vvars_t = []
+            for next_tag in range(nL):
+                next_tag_expr = for_expr + trans_exprs[next_tag]
+                next_tag_arr = next_tag_expr.npvalue()
+                best_tag_id  = np.argmax(next_tag_arr)
+                bptrs_t.append(best_tag_id)
+                vvars_t.append(pick(next_tag_expr, best_tag_id))
+            for_expr = concatenate(vvars_t) + obs
+            backpointers.append(bptrs_t)
+        # Perform final transition to terminal
+        terminal_expr = for_expr + trans_exprs[dct['_STOP_']]
+        terminal_arr  = terminal_expr.npvalue()
+        best_tag_id = np.argmax(terminal_arr)
+        path_score  = pick(terminal_expr, best_tag_id)
+        # Reverse over the backpointers to get the best path
+        best_path = [best_tag_id] # Start with the tag that was best for terminal
+        for bptrs_t in reversed(backpointers):
+            best_tag_id = bptrs_t[best_tag_id]
+            best_path.append(best_tag_id)
+        start = best_path.pop() # Remove the start symbol
+        best_path.reverse()
+        assert start == dct['_START_']
+        # Return best path and best path's score
+        return best_path, path_score
+
     def build_graph(self, sent_words, words, auto_tags, is_train):
         input_lstm = self.get_chunk_lstm_features(is_train, sent_words, words, auto_tags)
         H1 = parameter(self.H1) if self.H1 != None else None
@@ -88,7 +125,7 @@ class Chunker(Tagger):
     def neg_log_loss(self, sent_words, words, labels, auto_tags):
         observations = self.build_graph(sent_words, words, auto_tags, True)
         gold_score = self.score_sentence(observations, labels, self.transitions, self.vb.w2i)
-        forward_score = self.forward_semi(observations, self.nBios, self.transitions, self.vb.w2i)
+        forward_score = self.forward_semi(observations, self.nLabels, self.transitions, self.vl.w2i)
         return forward_score - gold_score
 
     def tag_sent(self, sent):
@@ -97,7 +134,7 @@ class Chunker(Tagger):
         ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in sent]
         auto_tags = self.pos_tagger.best_pos_tags(words)
         observations = self.build_graph(words, ws, auto_tags, False)
-        bios, score = self.viterbi_decoding(observations,self.transitions,self.vb.w2i, self.nBios)
+        bios, score = self.viterbi_decoding_semi(observations,self.transitions,self.vl.w2i, self.nLabels)
         return [self.vb.i2w[b] for b in bios],[self.pos_tagger.vt.i2w[p] for p in auto_tags]
 
     def train(self):
@@ -188,27 +225,27 @@ if __name__ == '__main__':
         print 'load #sent:',len(train)
         words = []
         bio_tags = []
-        bios = []
+        labels = []
         chars = {' ','<s>','</s>'}
         wc = Counter()
         for s in train:
             for w, p, bio in s:
                 words.append(w)
                 bio_tags.append(p)
-                bios.append(bio)
+                labels.append(bio[bio.find('-')+1:] if '-' in bio else bio)
                 [chars.add(x) for x in list(w)]
                 wc[w] += 1
         words.append('_UNK_')
-        bios.append('_START_')
-        bios.append('_STOP_')
+        labels.append('_START_')
+        labels.append('_STOP_')
         bio_tags.append('_START_')
         bio_tags.append('_STOP_')
         ch = list(chars)
 
         with open(os.path.join(options.output, options.params), 'w') as paramsfp:
-            pickle.dump((words, bio_tags, bios, ch, options), paramsfp)
+            pickle.dump((words, bio_tags, labels, ch, options), paramsfp)
 
-        Chunker(options, words, bio_tags, bios, ch,tagger).train()
+        Chunker(options, words, bio_tags, labels, ch,tagger).train()
 
         options.model = os.path.join(options.output,options.model)
         options.params = os.path.join(options.output,options.params)
@@ -217,8 +254,8 @@ if __name__ == '__main__':
         print options.model, options.params, options.eval_format
         print 'reading params'
         with open(options.params, 'r') as paramsfp:
-            words, bio_tags, bios, ch, opt = pickle.load(paramsfp)
-        chunker = Chunker(opt, words, bio_tags, bios, ch,tagger)
+            words, bio_tags, labels, ch, opt = pickle.load(paramsfp)
+        chunker = Chunker(opt, words, bio_tags, labels, ch,tagger)
 
         print 'loading model'
         print options.model
