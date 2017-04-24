@@ -39,6 +39,28 @@ class Chunker(Tagger):
                 sent.append((w, p, bio))
         if sent: yield  sent
 
+    def forward(self, observations, ntags, trans_matrix, dct):
+        def log_sum_exp(scores):
+            npval = scores.npvalue()
+            argmax_score = np.argmax(npval)
+            max_score_expr = pick(scores, argmax_score)
+            max_score_expr_broadcast = concatenate([max_score_expr] * ntags)
+            return max_score_expr + log(sum_cols(transpose(exp(scores - max_score_expr_broadcast))))
+
+        init_alphas = [-1e10] * ntags
+        init_alphas[dct['_START_']] = 0
+        for_expr = inputVector(init_alphas)
+        for obs in observations:
+            alphas_t = []
+            for next_tag in range(ntags):
+                obs_broadcast = concatenate([pick(obs, next_tag)] * ntags)
+                next_tag_expr = for_expr + trans_matrix[next_tag] + obs_broadcast
+                alphas_t.append(log_sum_exp(next_tag_expr))
+            for_expr = concatenate(alphas_t)
+        terminal_expr = for_expr + trans_matrix[dct['_STOP_']]
+        alpha = log_sum_exp(terminal_expr)
+        return alpha
+    
     def get_chunk_lstm_features(self, is_train, sent_words, words,auto_tags):
         tag_lstm, char_lstms, wembs, evec = self.get_pos_lstm_features(is_train, sent_words, words)
         pembs = [noise(self.PE[p], 0.001) if is_train else self.PE[p] for p in auto_tags]
