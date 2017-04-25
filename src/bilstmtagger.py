@@ -51,8 +51,9 @@ class Chunker(Tagger):
         for_expr = inputVector(init_alphas)
 
         for i in xrange(len(observations)):
-            fes = []*(len(observations)-i)
+            fes = []
             for k in xrange(len(observations)-i):
+                fes.append([])
                 feat = observations[k] - observations[i-1] if i>=0 else observations[k]
                 alphas_t = []
                 for next_tag in range(ntags):
