@@ -90,8 +90,9 @@ class Chunker(Tagger):
     def viterbi_decoding_semi(self, observations, trans_matrix, dct, nL):
         backpointers = []
         init_vvars   = [-1e10] * nL
-        init_vvars[dct['_START_']] = 0 # <Start> has all the probability
-        for_expr = [scalarInput(0)]*(len(observations)+1)
+        init_vvars[dct.w2i['_START_']] = 0 # <Start> has all the probability
+        init_vec = [0] * nL
+        for_expr = [inputVector(init_vec)]*(len(observations)+1)
         for_expr[0] = inputVector(init_vvars)
         trans_exprs  = [trans_matrix[idx] for idx in range(nL)]
         for i in xrange(len(observations)):
@@ -113,7 +114,7 @@ class Chunker(Tagger):
             for_expr[i] = concatenate(vvars_t)
             backpointers.append(bptrs_t)
         # Perform final transition to terminal
-        terminal_expr = for_expr[-1] + trans_exprs[dct['_STOP_']]
+        terminal_expr = for_expr[-1] + trans_exprs[dct.w2i['_STOP_']]
         terminal_arr  = terminal_expr.npvalue()
         best_tag_id = np.argmax(terminal_arr)
         path_score  = pick(terminal_expr, best_tag_id)
@@ -129,17 +130,17 @@ class Chunker(Tagger):
 
         bios = []
         for s,e,l in segments:
-            if l == 'O':
-                bios.append(l)
+            label = dct.i2w[l]
+            if label == 'O':
+                bios.append(label)
             else:
-                bios.append('B-'+l)
+                bios.append('B-'+label)
             for i in range(s,e):
-                if l == 'O':
-                    bios.append(l)
+                if label == 'O':
+                    bios.append(label)
                 else:
-                    bios.append('I-' + l)
+                    bios.append('I-' + label)
 
-        assert start == dct['_START_']
         # Return best path and best path's score
         return bios, path_score
 
@@ -167,7 +168,7 @@ class Chunker(Tagger):
         ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in sent]
         auto_tags = self.pos_tagger.best_pos_tags(words)
         observations = self.build_graph(words, ws, auto_tags, False)
-        bios, score = self.viterbi_decoding_semi(observations,self.transitions,self.vl.w2i, self.nLabels)
+        bios, score = self.viterbi_decoding_semi(observations,self.transitions,self.vl, self.nLabels)
         return bios,[self.pos_tagger.vt.i2w[p] for p in auto_tags]
 
     def train(self):
@@ -271,6 +272,7 @@ if __name__ == '__main__':
     print 'reading pos tagger'
     with open(options.pos_params, 'r') as paramsfp:
         p_words, p_tags, p_ch, p_opt = pickle.load(paramsfp)
+    p_opt.initial_embeddings = None
     tagger = Tagger(p_opt, p_words, p_tags, p_ch)
     tagger.load(options.pos_model)
     print 'writing params file'
