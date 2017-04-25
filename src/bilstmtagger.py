@@ -61,7 +61,9 @@ class Chunker(Tagger):
                     next_tag_expr = for_expr + trans_matrix[next_tag] + obs_broadcast
                     alphas_t.append(log_sum_exp(next_tag_expr))
                     fes[k].append(concatenate(alphas_t))
-            for_expr = sum_cols(concatenate_cols(fes))
+            for_expr = concatenate(fes[0])
+            for k in range(1,len(observations) - i):
+                for_expr = for_expr + concatenate(fes[i])
         terminal_expr = for_expr + trans_matrix[dct['_STOP_']]
         alpha = log_sum_exp(terminal_expr)
         return alpha
