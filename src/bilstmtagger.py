@@ -195,7 +195,7 @@ class Chunker(Tagger):
                 if len(batch)>=self.batch:
                     errs = []
                     for j in xrange(len(batch)):
-                        sent_words,ws,ps,segments,at = batch[j]
+                        sent_words,ws,ps,segments,l,at = batch[j]
                         if ITER < self.options.pos_epochs:
                             errs.append(self.pos_neg_log_loss(sent_words, ws,  ps))
                         else:
