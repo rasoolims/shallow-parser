@@ -38,7 +38,7 @@ class Chunker(Tagger):
                 sent.append((w, p, bio))
         if sent: yield  sent
 
-    def forward_semi(self, observations, ntags, trans_matrix, dct):
+    def forward_semi(self, observations, ntags, trans_matrix, dct,longest):
         def log_sum_exp(scores):
             npval = scores.npvalue()
             argmax_score = np.argmax(npval)
@@ -52,12 +52,12 @@ class Chunker(Tagger):
 
         for i in xrange(len(observations)):
             alphas_t = [scalarInput(0)]*ntags
-            for k in xrange(i+1):
+            for k in min(longest,xrange(i+1)):
                 feat = observations[k] - observations[i-1] if i>=0 else observations[k]
                 for next_tag in range(ntags):
                     obs_broadcast = concatenate([pick(feat, next_tag)] * ntags)
                     next_tag_expr = for_expr + trans_matrix[next_tag] + obs_broadcast
-                    alphas_t[next_tag] = alphas_t[next_tag]+ log_sum_exp(next_tag_expr)
+                    alphas_t[next_tag] = alphas_t[next_tag] + log_sum_exp(next_tag_expr)
             for_expr = concatenate(alphas_t)
         terminal_expr = for_expr + trans_matrix[dct['_STOP_']]
         alpha = log_sum_exp(terminal_expr)
@@ -155,10 +155,10 @@ class Chunker(Tagger):
             scores.append(score_t)
         return scores
 
-    def neg_log_loss(self, sent_words, words, segments, auto_tags):
+    def neg_log_loss(self, sent_words, words, segments, longest, auto_tags):
         observations = self.build_graph(sent_words, words, auto_tags, True)
         gold_score = self.score_sentence_semi(observations, segments, self.transitions, self.vl.w2i)
-        forward_score = self.forward_semi(observations, self.nLabels, self.transitions, self.vl.w2i)
+        forward_score = self.forward_semi(observations, self.nLabels, self.transitions, self.vl.w2i,longest)
         return forward_score - gold_score
 
     def tag_sent(self, sent):
@@ -188,8 +188,8 @@ class Chunker(Tagger):
                 ps = [self.vt.w2i[t] for w, t, bio in s]
                 auto_tags = self.pos_tagger.best_pos_tags([w for w, p, bio in s])
 
-                segments = self.get_segments(s)
-                batch.append(([w for w,_,_ in s],ws,ps,segments,auto_tags))
+                segments,l = self.get_segments(s)
+                batch.append(([w for w,_,_ in s],ws,ps,segments,l,auto_tags))
                 tagged += len(ps)
 
                 if len(batch)>=self.batch:
@@ -199,7 +199,7 @@ class Chunker(Tagger):
                         if ITER < self.options.pos_epochs:
                             errs.append(self.pos_neg_log_loss(sent_words, ws,  ps))
                         else:
-                            errs.append(self.neg_log_loss(sent_words, ws,  segments, at))
+                            errs.append(self.neg_log_loss(sent_words, ws,  segments, l,at))
                     sum_errs = esum(errs)
                     loss += sum_errs.scalar_value()
                     sum_errs.backward()
@@ -218,20 +218,24 @@ class Chunker(Tagger):
         segments = []
         s, e, l = 0, 0, ''
         r = False
+        longest = 1
         for i in xrange(len(bios)):
             if bios[i] == 'O':
-                if r: segments.append((s, e, bios[i - 1][bios[i - 1].find('-') + 1:]))
+                if r:
+                    segments.append((s, e, bios[i - 1][bios[i - 1].find('-') + 1:]))
+                    if e-s+1> longest: longest = e-s+1
                 segments.append((i, i, bios[i]))
                 r = False
                 s,e = i + 1,i + 1
             elif bios[i].startswith('B-') and not r:
                 segments.append((s, e, bios[i - 1][bios[i - 1].find('-') + 1:]))
+                if e - s + 1 > longest: longest = e - s + 1
                 s,e = i,i
             else:
                 e = i
                 r = True
         if r: segments.append((s, e, bios[-1][bios[-1].find('-') + 1:]))
-        return segments
+        return segments,longest
 
     def validate(self, best_dev):
         dev = list(self.read(options.dev_file))
