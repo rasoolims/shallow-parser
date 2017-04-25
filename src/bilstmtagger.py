@@ -91,7 +91,7 @@ class Chunker(Tagger):
         backpointers = []
         init_vvars   = [-1e10] * nL
         init_vvars[dct['_START_']] = 0 # <Start> has all the probability
-        for_expr = [inputVector(0)]*(len(observations)+1)
+        for_expr = [scalarInput(0)]*(len(observations)+1)
         for_expr[0] = inputVector(init_vvars)
         trans_exprs  = [trans_matrix[idx] for idx in range(nL)]
         for i in xrange(len(observations)):
