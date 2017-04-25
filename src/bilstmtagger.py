@@ -158,8 +158,8 @@ class Chunker(Tagger):
     def neg_log_loss(self, sent_words, words, segments, longest, auto_tags):
         observations = self.build_graph(sent_words, words, auto_tags, True)
         gold_score = self.score_sentence_semi(observations, segments, self.transitions, self.vl.w2i)
-        forward_score = self.forward_semi(observations, self.nLabels, self.transitions, self.vl.w2i,longest)
-        return forward_score - gold_score
+        #forward_score = self.forward_semi(observations, self.nLabels, self.transitions, self.vl.w2i,longest)
+        return gold_score#forward_score - gold_score
 
     def tag_sent(self, sent):
         renew_cg()
