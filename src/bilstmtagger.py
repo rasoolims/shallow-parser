@@ -52,7 +52,7 @@ class Chunker(Tagger):
 
         for i in xrange(len(observations)):
             alphas_t = [scalarInput(0)]*ntags
-            for k in min(longest,xrange(i+1)):
+            for k in xrange(min(longest,i+1)):
                 feat = observations[k] - observations[i-1] if i>=0 else observations[k]
                 for next_tag in range(ntags):
                     obs_broadcast = concatenate([pick(feat, next_tag)] * ntags)
