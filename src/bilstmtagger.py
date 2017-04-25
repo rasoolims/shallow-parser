@@ -101,7 +101,7 @@ class Chunker(Tagger):
                 max_pointer = 0
                 max_value = float('-inf')
                 for k in xrange(i+1):
-                    next_tag_expr = for_expr[k] + trans_exprs[next_tag] + observations[i] - (observations[k-1] if k>0 else inputVector(0))
+                    next_tag_expr = for_expr[k] + trans_exprs[next_tag] + (observations[i] - observations[k-1]) if k>0 else  observations[i]
                     next_tag_arr = next_tag_expr.npvalue()
                     best_tag_id  = np.argmax(next_tag_arr)
                     v = pick(next_tag_expr, best_tag_id).value()
