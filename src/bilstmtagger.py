@@ -54,10 +54,7 @@ class Chunker(Tagger):
             alphas_t = [[None]*(i+1)]*ntags
             for k in xrange(i+1):
                 for next_tag in range(ntags):
-                    obs_broadcast = concatenate([pick(observations[i][k], next_tag)] * ntags)
-                    next_tag_expr = for_expr + trans_matrix[next_tag] + obs_broadcast
-                    alphas_t[next_tag][k] = next_tag_expr
-
+                    alphas_t[next_tag][k] = for_expr + trans_matrix[next_tag] + concatenate([pick(observations[i][k], next_tag)] * ntags)
             for_expr = concatenate([log_sum_exp(concatenate([alphas_t[t][j] for j in xrange(i+1)]), i+1) for t in xrange(ntags)])
         terminal_expr = for_expr + trans_matrix[dct['_STOP_']]
         alpha = log_sum_exp(terminal_expr, 1)
@@ -163,6 +160,8 @@ class Chunker(Tagger):
         observations = self.build_graph(sent_words, words, auto_tags, True)
         gold_score = self.score_sentence_semi(observations, segments, self.transitions, self.vl.w2i)
         forward_score = self.forward_semi(observations, self.nLabels, self.transitions, self.vl.w2i, longest)
+        if (forward_score - gold_score).value()<0:
+            pass
         return forward_score - gold_score
 
     def tag_sent(self, sent):
@@ -206,6 +205,8 @@ class Chunker(Tagger):
                             errs.append(self.neg_log_loss(sent_words, ws,  segments, l,at))
                     sum_errs = esum(errs)
                     loss += sum_errs.scalar_value()
+                    if loss<0:
+                        pass
                     sum_errs.backward()
                     self.trainer.update()
                     renew_cg()

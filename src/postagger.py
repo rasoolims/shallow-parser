@@ -224,6 +224,9 @@ class Tagger:
     def tag_sent(self, sent):
         return [self.vt.i2w[t] for t in self.best_pos_tags([w for w,p in sent])]
 
+    def tag_raw_sent(self, sent):
+        return [self.vt.i2w[t] for t in self.best_pos_tags([w for w in sent])]
+
     def train(self, dev_data):
         tagged, loss = 0,0
         best_dev = float('-inf')
@@ -332,7 +335,7 @@ if __name__ == '__main__':
         writer = codecs.open(options.outfile, 'w')
         for sent in test:
             output = list()
-            pos_tags = tagger.tag_sent(sent)
+            pos_tags = tagger.tag_raw_sent(sent)
             [output.append((sent[i]+'_'+pos_tags[i])) for i in xrange(len(pos_tags))]
             writer.write(' '.join(output))
             writer.write('\n')
