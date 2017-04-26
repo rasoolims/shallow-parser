@@ -39,11 +39,11 @@ class Chunker(Tagger):
         if sent: yield  sent
 
     def forward_semi(self, observations, ntags, trans_matrix, dct,longest):
-        def log_sum_exp(scores):
+        def log_sum_exp(scores,ln):
             npval = scores.npvalue()
             argmax_score = np.argmax(npval)
             max_score_expr = pick(scores, argmax_score)
-            max_score_expr_broadcast = concatenate([max_score_expr] * ntags)
+            max_score_expr_broadcast = concatenate([max_score_expr] * (ntags*ln))
             return max_score_expr + log(sum_cols(transpose(exp(scores - max_score_expr_broadcast))))
 
         init_alphas = [-1e10] * ntags
@@ -51,16 +51,17 @@ class Chunker(Tagger):
         for_expr = inputVector(init_alphas)
 
         for i in xrange(len(observations)):
-            alphas_t = [scalarInput(0)]*ntags
+            alphas_t = [[None]*min(longest,i+1)]*ntags
             for k in xrange(min(longest,i+1)):
                 feat = observations[i] - observations[k-1] if k>0 else observations[i]
                 for next_tag in range(ntags):
                     obs_broadcast = concatenate([pick(feat, next_tag)] * ntags)
                     next_tag_expr = for_expr + trans_matrix[next_tag] + obs_broadcast
-                    alphas_t[next_tag] = alphas_t[next_tag] + log_sum_exp(next_tag_expr)
-            for_expr = concatenate(alphas_t)
+                    alphas_t[next_tag][k] = next_tag_expr
+
+            for_expr = concatenate([log_sum_exp(concatenate([alphas_t[t][j] for j in xrange(min(longest,i+1))]), min(longest,i+1)) for t in xrange(ntags)])
         terminal_expr = for_expr + trans_matrix[dct['_STOP_']]
-        alpha = log_sum_exp(terminal_expr)
+        alpha = log_sum_exp(terminal_expr, 1)
         return alpha
 
     def get_chunk_lstm_features(self, is_train, sent_words, words,auto_tags):
@@ -159,8 +160,8 @@ class Chunker(Tagger):
     def neg_log_loss(self, sent_words, words, segments, longest, auto_tags):
         observations = self.build_graph(sent_words, words, auto_tags, True)
         gold_score = self.score_sentence_semi(observations, segments, self.transitions, self.vl.w2i)
-        #forward_score = self.forward_semi(observations, self.nLabels, self.transitions, self.vl.w2i,longest)
-        return gold_score#forward_score - gold_score
+        forward_score = self.forward_semi(observations, self.nLabels, self.transitions, self.vl.w2i, longest)
+        return forward_score - gold_score
 
     def tag_sent(self, sent):
         renew_cg()
