@@ -53,9 +53,8 @@ class Chunker(Tagger):
         for i in xrange(len(observations)):
             alphas_t = [[None]*min(longest,i+1)]*ntags
             for k in xrange(min(longest,i+1)):
-                feat = observations[i] - observations[k-1] if k>0 else observations[i]
                 for next_tag in range(ntags):
-                    obs_broadcast = concatenate([pick(feat, next_tag)] * ntags)
+                    obs_broadcast = concatenate([pick(observations[i][k], next_tag)] * ntags)
                     next_tag_expr = for_expr + trans_matrix[next_tag] + obs_broadcast
                     alphas_t[next_tag][k] = next_tag_expr
 
@@ -83,7 +82,7 @@ class Chunker(Tagger):
 
         for i in xrange(len(segments)):
             s,e,_ = segments[i]
-            score = score + pick(trans_matrix[labels[i+1]],labels[i]) + pick(observations[e], labels[i+1]) - (pick(observations[s-1], labels[i]) if s>0 else scalarInput(0))
+            score = score + pick(trans_matrix[labels[i+1]],labels[i]) + pick(observations[e][s], labels[i+1]) 
             score_seq.append(score.value())
         score = score + pick(trans_matrix[dct['_STOP_']],labels[-1])
         return score
@@ -103,7 +102,7 @@ class Chunker(Tagger):
                 max_pointer = 0
                 max_value = float('-inf')
                 for k in xrange(i+1):
-                    next_tag_expr = for_expr[k] + trans_exprs[next_tag] + (observations[i] - observations[k-1]) if k>0 else  observations[i]
+                    next_tag_expr = for_expr[k] + trans_exprs[next_tag] + observations[i][k]
                     next_tag_arr = next_tag_expr.npvalue()
                     best_tag_id  = np.argmax(next_tag_arr)
                     v = pick(next_tag_expr, best_tag_id).value()
@@ -150,11 +149,14 @@ class Chunker(Tagger):
         H1 = parameter(self.H1) if self.H1 != None else None
         H2 = parameter(self.H2) if self.H2 != None else None
         O = parameter(self.O)
-        scores = []
+        scores = [None]*len(input_lstm)
 
-        for f in input_lstm:
-            score_t = O*(self.activation(H2*self.activation(H1 * f))) if H2!=None else O * (self.activation(H1 * f)) if self.H1 != None  else O * f
-            scores.append(score_t)
+        for i in xrange(len(input_lstm)):
+            scores[i] = [None]*(i+1)
+            for k in xrange(i+1):
+                f = input_lstm[i] - input_lstm[k-1] if k>0 else input_lstm[i]
+                score_t = O * (self.activation(H2 * self.activation(H1 * f))) if H2 != None else O * (self.activation(H1 * f)) if self.H1 != None  else O * f
+                scores[i][k] = score_t
         return scores
 
     def neg_log_loss(self, sent_words, words, segments, longest, auto_tags):
