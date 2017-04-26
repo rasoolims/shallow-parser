@@ -51,14 +51,14 @@ class Chunker(Tagger):
         for_expr = inputVector(init_alphas)
 
         for i in xrange(len(observations)):
-            alphas_t = [[None]*min(longest,i+1)]*ntags
-            for k in xrange(min(longest,i+1)):
+            alphas_t = [[None]*(i+1)]*ntags
+            for k in xrange(i+1):
                 for next_tag in range(ntags):
                     obs_broadcast = concatenate([pick(observations[i][k], next_tag)] * ntags)
                     next_tag_expr = for_expr + trans_matrix[next_tag] + obs_broadcast
                     alphas_t[next_tag][k] = next_tag_expr
 
-            for_expr = concatenate([log_sum_exp(concatenate([alphas_t[t][j] for j in xrange(min(longest,i+1))]), min(longest,i+1)) for t in xrange(ntags)])
+            for_expr = concatenate([log_sum_exp(concatenate([alphas_t[t][j] for j in xrange(i+1)]), i+1) for t in xrange(ntags)])
         terminal_expr = for_expr + trans_matrix[dct['_STOP_']]
         alpha = log_sum_exp(terminal_expr, 1)
         return alpha
@@ -82,7 +82,7 @@ class Chunker(Tagger):
 
         for i in xrange(len(segments)):
             s,e,_ = segments[i]
-            score = score + pick(trans_matrix[labels[i+1]],labels[i]) + pick(observations[e][s], labels[i+1]) 
+            score = score + pick(trans_matrix[labels[i+1]],labels[i]) + pick(observations[e][s], labels[i+1])
             score_seq.append(score.value())
         score = score + pick(trans_matrix[dct['_STOP_']],labels[-1])
         return score
