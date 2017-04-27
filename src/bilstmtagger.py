@@ -43,7 +43,9 @@ class Chunker(Tagger):
             npval = scores.npvalue()
             argmax_score = np.argmax(npval)
             max_score_expr = pick(scores, argmax_score)
-            max_score_expr_broadcast = concatenate([max_score_expr] * (ntags*ln))
+            max_score_expr_broadcast = concatenate([max_score_expr] * ln)
+            if max_score_expr.value()<0:
+                pass
             return max_score_expr + log(sum_cols(transpose(exp(scores - max_score_expr_broadcast))))
 
         init_alphas = [-1e10] * ntags
@@ -51,13 +53,16 @@ class Chunker(Tagger):
         for_expr = inputVector(init_alphas)
 
         for i in xrange(len(observations)):
-            alphas_t = [[None]*(i+1)]*ntags
-            for k in xrange(i+1):
-                for next_tag in range(ntags):
-                    alphas_t[next_tag][k] = for_expr + trans_matrix[next_tag] + concatenate([pick(observations[i][k], next_tag)] * ntags)
-            for_expr = concatenate([log_sum_exp(concatenate([alphas_t[t][j] for j in xrange(i+1)]), i+1) for t in xrange(ntags)])
+            alphas_t = []
+            for next_tag in range(ntags):
+                a = []
+                for k in xrange(i+1):
+                    a.append(for_expr + trans_matrix[next_tag] + concatenate([pick(observations[i][k], next_tag)] * ntags))
+                alphas_t.append(log_sum_exp(concatenate([a[j] for j in xrange(i+1)]),ntags* (i+1)))
+
+            for_expr = concatenate(alphas_t)
         terminal_expr = for_expr + trans_matrix[dct['_STOP_']]
-        alpha = log_sum_exp(terminal_expr, 1)
+        alpha = log_sum_exp(terminal_expr, ntags)
         return alpha
 
     def get_chunk_lstm_features(self, is_train, sent_words, words,auto_tags):
