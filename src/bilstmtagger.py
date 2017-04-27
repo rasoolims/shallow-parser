@@ -156,6 +156,7 @@ if __name__ == '__main__':
     print 'reading pos tagger'
     with open(options.pos_params, 'r') as paramsfp:
         p_words, p_tags, p_ch, p_opt = pickle.load(paramsfp)
+    p_opt.initial_embeddings = None
     tagger = Tagger(p_opt, p_words, p_tags, p_ch)
     tagger.load(options.pos_model)
     print 'writing params file'
