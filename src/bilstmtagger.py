@@ -236,6 +236,7 @@ if __name__ == '__main__':
         chunker.load(options.model)
         files = options.inputs.strip().split(',')
         for f in files:
+            print f
             test = list(Tagger.read_raw(f))
             print 'loaded', len(test), 'sentences!'
             writer = codecs.open(f+'.chunk', 'w')
