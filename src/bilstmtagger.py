@@ -240,10 +240,13 @@ if __name__ == '__main__':
             test = list(Tagger.read_raw(f))
             print 'loaded', len(test), 'sentences!'
             writer = codecs.open(f+'.chunk', 'w')
-            for sent in test:
+            for i, sent in enumerate(test, 1):
                 output = list()
                 bio_tags, pos_tags = chunker.chunk_raw_sent(sent)
                 [output.append(' '.join([sent[i], pos_tags[i], bio_tags[i]])) for i in xrange(len(bio_tags))]
                 writer.write('\n'.join(output))
                 writer.write('\n\n')
+                if i%100==0:
+                    sys.stdout.write(str(i)+'...')
+            sys.stdout.write('done!')
             writer.close()
