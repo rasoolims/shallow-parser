@@ -78,6 +78,14 @@ class Chunker(Tagger):
         bios, score = self.viterbi_decoding(observations,self.transitions,self.vb.w2i, self.nBios)
         return [self.vb.i2w[b] for b in bios],[self.pos_tagger.vt.i2w[p] for p in auto_tags]
 
+    def chunk_raw_sent(self, sent):
+        renew_cg()
+        ws = [self.vw.w2i.get(w, self.UNK_W) for w in sent]
+        auto_tags = self.pos_tagger.best_pos_tags(sent)
+        observations = self.build_graph(sent, ws, auto_tags, False)
+        bios, score = self.viterbi_decoding(observations,self.transitions,self.vb.w2i, self.nBios)
+        return [self.vb.i2w[b] for b in bios],[self.pos_tagger.vt.i2w[p] for p in auto_tags]
+
     def train(self):
         tagged, loss = 0,0
         best_dev = float('-inf')
@@ -216,3 +224,25 @@ if __name__ == '__main__':
             writer.write('\n'.join(output))
             writer.write('\n\n')
         print 'done!'
+    if options.inputs != '' and options.params != '' and options.model != '' and options.outfile != '':
+        print options.model, options.params, options.eval_format
+        print 'reading params'
+        with open(options.params, 'r') as paramsfp:
+            words, bio_tags, bios, ch, opt = pickle.load(paramsfp)
+        chunker = Chunker(opt, words, bio_tags, bios, ch, tagger)
+
+        print 'loading model'
+        print options.model
+        chunker.load(options.model)
+        files = options.inputs.strip().split(',')
+        for f in files:
+            test = list(Tagger.read_raw(f))
+            print 'loaded', len(test), 'sentences!'
+            writer = codecs.open(f+'.chunk', 'w')
+            for sent in test:
+                output = list()
+                bio_tags, pos_tags = chunker.chunk_raw_sent(sent)
+                [output.append(' '.join([sent[i], pos_tags[i], bio_tags[i]])) for i in xrange(len(bio_tags))]
+                writer.write('\n'.join(output))
+                writer.write('\n\n')
+            writer.close()
