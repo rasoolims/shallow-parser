@@ -44,24 +44,22 @@ class Chunker(Tagger):
             argmax_score = np.argmax(npval)
             max_score_expr = pick(scores, argmax_score)
             max_score_expr_broadcast = concatenate([max_score_expr] * ln)
-            if max_score_expr.value()<0:
-                pass
             return max_score_expr + log(sum_cols(transpose(exp(scores - max_score_expr_broadcast))))
 
         init_alphas = [-1e10] * ntags
         init_alphas[dct['_START_']] = 0
-        for_expr = inputVector(init_alphas)
+        for_expr = [inputVector([0] * ntags)] * (len(observations) + 1)
+        for_expr[0] = inputVector(init_alphas)
 
         for i in xrange(len(observations)):
             alphas_t = []
             for next_tag in range(ntags):
                 a = []
                 for k in xrange(i+1):
-                    a.append(for_expr + trans_matrix[next_tag] + concatenate([pick(observations[i][k], next_tag)] * ntags))
-                alphas_t.append(log_sum_exp(concatenate([a[j] for j in xrange(i+1)]),ntags* (i+1)))
-
-            for_expr = concatenate(alphas_t)
-        terminal_expr = for_expr + trans_matrix[dct['_STOP_']]
+                    a.append(for_expr[k] + trans_matrix[next_tag] + concatenate([pick(observations[i][k], next_tag)] * ntags))
+                alphas_t.append(log_sum_exp(concatenate([a[j] for j in xrange(i+1)]),(i+1)*ntags))
+            for_expr[i+1] = concatenate(alphas_t)
+        terminal_expr = for_expr[-1] + trans_matrix[dct['_STOP_']]
         alpha = log_sum_exp(terminal_expr, ntags)
         return alpha
 
@@ -113,7 +111,7 @@ class Chunker(Tagger):
                         max_pointer =best_tag_id,k,pick(next_tag_expr, best_tag_id)
                 bptrs_t.append((max_pointer[0],max_pointer[1]))
                 vvars_t.append(max_pointer[2])
-            for_expr[i] = concatenate(vvars_t)
+            for_expr[i+1] = concatenate(vvars_t)
             backpointers.append(bptrs_t)
         # Perform final transition to terminal
         terminal_expr = for_expr[-1] + trans_exprs[dct.w2i['_STOP_']]
@@ -165,8 +163,7 @@ class Chunker(Tagger):
         observations = self.build_graph(sent_words, words, auto_tags, True)
         gold_score = self.score_sentence_semi(observations, segments, self.transitions, self.vl.w2i)
         forward_score = self.forward_semi(observations, self.nLabels, self.transitions, self.vl.w2i, longest)
-        if (forward_score - gold_score).value()<0:
-            pass
+        assert (forward_score - log(gold_score)).value()>=0
         return forward_score - gold_score
 
     def tag_sent(self, sent):
@@ -210,8 +207,6 @@ class Chunker(Tagger):
                             errs.append(self.neg_log_loss(sent_words, ws,  segments, l,at))
                     sum_errs = esum(errs)
                     loss += sum_errs.scalar_value()
-                    if loss<0:
-                        pass
                     sum_errs.backward()
                     self.trainer.update()
                     renew_cg()
