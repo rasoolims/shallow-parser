@@ -163,7 +163,7 @@ class Chunker(Tagger):
         observations = self.build_graph(sent_words, words, auto_tags, True)
         gold_score = self.score_sentence_semi(observations, segments, self.transitions, self.vl.w2i)
         forward_score = self.forward_semi(observations, self.nLabels, self.transitions, self.vl.w2i, longest)
-        assert (forward_score - log(gold_score)).value()>=0
+        #assert (forward_score - log(gold_score)).value()>=0
         return forward_score - gold_score
 
     def tag_sent(self, sent):
