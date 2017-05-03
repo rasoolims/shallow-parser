@@ -87,6 +87,53 @@ class Chunker(Tagger):
         score = score + pick(trans_matrix[dct['_STOP_']],labels[-1])
         return score
 
+    def next_action(self, observations, segments, score, index):
+        best_score,best_end,best_label,best_sc = float('-inf'),index,0,None
+        prev_label = self.vl.w2i['_START_'] if index == 0 else segments[-1][2]
+        for j in range(index, len(observations)):
+            for label in xrange(self.nLabels):
+                sc = score + pick(self.transitions[label], prev_label) + pick(observations[j][index], label)
+                if sc.value()>best_score:
+                    best_score = sc
+                    best_label = label
+                    best_end = j
+                    best_sc = sc
+        score = best_sc
+        if best_end==len(observations)-1:
+            score = score + pick(self.transitions[self.vl.w2i['_STOP_']],best_label)
+        segments.append((index, best_end, best_label))
+        return score,best_end+1
+
+    def greedy_tag(self, observations):
+        index,segments,score = 0,[],scalarInput(0)
+        while index<len(observations)-1:
+            score,index = self.next_action(observations, segments, score, index)
+        return segments,score
+
+    def tag_greedy_search(self,segments):
+        bios = []
+        for s, e, l in segments:
+            label = self.vl.i2w[l]
+            if label == 'O':
+                bios.append(label)
+            else:
+                bios.append('B-' + label)
+            for i in range(s, e):
+                if label == 'O':
+                    bios.append(label)
+                else:
+                    bios.append('I-' + label)
+        return bios
+
+    def margin_loss(self, sent_words, words, segments, longest, auto_tags):
+        observations = self.build_graph(sent_words, words, auto_tags, True)
+        gold_score = self.score_sentence_semi(observations, segments, self.transitions, self.vl.w2i)
+        _,best_score = self.greedy_tag(observations)
+        if (gold_score - best_score).value() < 1.0:
+            return best_score - gold_score
+        else:
+            return scalarInput(0)
+
     def viterbi_decoding_semi(self, observations, trans_matrix, dct, nL):
         backpointers = []
         init_vvars   = [-1e10] * nL
@@ -162,6 +209,7 @@ class Chunker(Tagger):
     def neg_log_loss(self, sent_words, words, segments, longest, auto_tags):
         observations = self.build_graph(sent_words, words, auto_tags, True)
         gold_score = self.score_sentence_semi(observations, segments, self.transitions, self.vl.w2i)
+        gold_score = self.score_sentence_semi(observations, segments, self.transitions, self.vl.w2i)
         forward_score = self.forward_semi(observations, self.nLabels, self.transitions, self.vl.w2i, longest)
         #assert (forward_score - log(gold_score)).value()>=0
         return forward_score - gold_score
@@ -172,7 +220,7 @@ class Chunker(Tagger):
         ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in sent]
         auto_tags = self.pos_tagger.best_pos_tags(words)
         observations = self.build_graph(words, ws, auto_tags, False)
-        bios, score = self.viterbi_decoding_semi(observations,self.transitions,self.vl, self.nLabels)
+        bios = self.tag_greedy_search(self.greedy_tag(observations)[0])
         return bios,[self.pos_tagger.vt.i2w[p] for p in auto_tags]
 
     def chunk_raw_sent(self, sent):
@@ -212,7 +260,7 @@ class Chunker(Tagger):
                         if ITER < self.options.pos_epochs:
                             errs.append(self.pos_neg_log_loss(sent_words, ws,  ps))
                         else:
-                            errs.append(self.neg_log_loss(sent_words, ws,  segments, l,at))
+                            errs.append(self.margin_loss(sent_words, ws,  segments, l,at))
                     sum_errs = esum(errs)
                     loss += sum_errs.scalar_value()
                     sum_errs.backward()
