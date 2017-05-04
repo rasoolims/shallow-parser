@@ -130,7 +130,7 @@ class Chunker(Tagger):
         gold_score = self.score_sentence_semi(observations, segments, self.transitions, self.vl.w2i)
         _,best_score = self.greedy_tag(observations)
         if (gold_score - best_score).value() < 1.0:
-            return best_score - gold_score
+            return  scalarInput(1) + best_score - gold_score
         else:
             return scalarInput(0)
 
