@@ -288,10 +288,11 @@ class Chunker(Tagger):
                 segments.append((i, i, bios[i]))
                 r = False
                 s,e = i + 1,i + 1
-            elif bios[i].startswith('B-') and not r:
+            elif bios[i].startswith('B-') and r:
                 segments.append((s, e, bios[i - 1][bios[i - 1].find('-') + 1:]))
                 if e - s + 1 > longest: longest = e - s + 1
                 s,e = i,i
+                r = False
             else:
                 e = i
                 r = True
