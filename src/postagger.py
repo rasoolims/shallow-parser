@@ -224,7 +224,7 @@ class Tagger:
     def tag_sent(self, sent):
         return [self.vt.i2w[t] for t in self.best_pos_tags([w for w,p in sent])]
 
-    def train(self, dev_data):
+    def train(self, train_data, dev_data):
         tagged, loss = 0,0
         best_dev = float('-inf')
         for ITER in xrange(self.options.epochs):
@@ -311,7 +311,7 @@ if __name__ == '__main__':
         with open(os.path.join(options.output, options.params), 'w') as paramsfp:
             pickle.dump((words, tags, ch, options), paramsfp)
 
-        Tagger(options, words, tags, ch).train(dev_data)
+        Tagger(options, words, tags, ch).train(train_data, dev_data)
 
         options.model = os.path.join(options.output,options.model)
         options.params = os.path.join(options.output,options.params)

@@ -86,15 +86,21 @@ class Chunker(Tagger):
         bios, score = self.viterbi_decoding(observations,self.transitions,self.vb.w2i, self.nBios)
         return [self.vb.i2w[b] for b in bios],[self.pos_tagger.vt.i2w[p] for p in auto_tags]
 
-    def train(self):
+    def train(self, train_data):
         tagged, loss = 0,0
         best_dev = float('-inf')
-        batch = 0
+        auto_tagged = False
         for ITER in xrange(self.options.epochs):
             print 'ITER', ITER
-            random.shuffle(train)
+            random.shuffle(train_data)
             batch = []
-            for i, s in enumerate(train, 1):
+            if ITER >= self.options.pos_epochs and not auto_tagged:
+                for data in train_data:
+                    auto_tags = self.pos_tagger.best_pos_tags([w for w, p, bio in data])
+                    for i in xrange(len(data)):
+                        data[i][1] = auto_tags[i]
+                auto_tagged = True
+            for i, s in enumerate(train_data, 1):
                 if i % 1000 == 0:
                     self.trainer.status()
                     print loss / tagged
@@ -103,20 +109,18 @@ class Chunker(Tagger):
                     if ITER >= self.options.pos_epochs: best_dev = self.validate(best_dev)
                 ws = [self.vw.w2i.get(w, self.UNK_W) for w, p, bio in s]
                 ps = [self.vt.w2i[t] for w, t, bio in s]
-                auto_tags = self.pos_tagger.best_pos_tags([w for w, p, bio in s])
                 bs = [self.vb.w2i[bio] for w, p, bio in s]
-                batch.append(([w for w,_,_ in s],ws,ps,bs,auto_tags))
+                batch.append(([w for w,_,_ in s],ws,ps,bs))
                 tagged += len(ps)
-
 
                 if len(batch)>=self.batch:
                     errs = []
                     for j in xrange(len(batch)):
-                        sent_words,ws,ps,bs,at = batch[j]
+                        sent_words,ws,ps,bs = batch[j]
                         if ITER < self.options.pos_epochs:
                             errs.append(self.pos_neg_log_loss(sent_words, ws,  ps))
                         else:
-                            errs.append(self.neg_log_loss(sent_words, ws,  bs, at))
+                            errs.append(self.neg_log_loss(sent_words, ws,  bs, ps))
                     sum_errs = esum(errs)
                     loss += sum_errs.scalar_value()
                     sum_errs.backward()
@@ -171,14 +175,14 @@ if __name__ == '__main__':
 
     if options.conll_train != '' and options.output != '':
         if not os.path.isdir(options.output): os.mkdir(options.output)
-        train = list(Chunker.read(options.conll_train))
-        print 'load #sent:',len(train)
+        train_data = list(Chunker.read(options.conll_train))
+        print 'load #sent:',len(train_data)
         words = []
         bio_tags = []
         bios = []
         chars = {' ','<s>','</s>'}
         wc = Counter()
-        for s in train:
+        for s in train_data:
             for w, p, bio in s:
                 words.append(w)
                 bio_tags.append(p)
@@ -195,7 +199,7 @@ if __name__ == '__main__':
         with open(os.path.join(options.output, options.params), 'w') as paramsfp:
             pickle.dump((words, bio_tags, bios, ch, options), paramsfp)
 
-        Chunker(options, words, bio_tags, bios, ch,tagger).train()
+        Chunker(options, words, bio_tags, bios, ch,tagger).train(train_data)
 
         options.model = os.path.join(options.output,options.model)
         options.params = os.path.join(options.output,options.params)
