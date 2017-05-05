@@ -92,6 +92,7 @@ class Chunker(Tagger):
         prev_label = self.vl.w2i['_START_'] if index == 0 else segments[-1][2]
         for j in range(index, len(observations)):
             for label in xrange(self.nLabels):
+                if label == self.vl.i2w['_START_'] or label == self.vl.i2w['_STOP_']: continue
                 sc = score + pick(self.transitions[label], prev_label) + pick(observations[j][index], label)
                 if sc.value() > best_score:
                     best_score = sc.value()
