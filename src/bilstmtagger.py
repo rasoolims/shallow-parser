@@ -93,8 +93,8 @@ class Chunker(Tagger):
         for j in range(index, len(observations)):
             for label in xrange(self.nLabels):
                 sc = score + pick(self.transitions[label], prev_label) + pick(observations[j][index], label)
-                if sc.value()>best_score:
-                    best_score = sc
+                if sc.value() > best_score:
+                    best_score = sc.value()
                     best_label = label
                     best_end = j
                     best_sc = sc
