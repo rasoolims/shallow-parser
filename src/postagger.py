@@ -31,6 +31,7 @@ def parse_options():
     parser.add_option('--outdir', type='string', dest='output', default='')
     parser.add_option('--outfile', type='string', dest='outfile', default='')
     parser.add_option("--eval", action="store_true", dest="eval_format", default=False)
+    parser.add_option("--conll", action="store_true", dest="input_raw", help='raw input for pos tag', default=False)
     parser.add_option("--activation", type="string", dest="activation", default="tanh")
     parser.add_option("--drop", action="store_true", dest="drop", default=False, help='Use dropout.')
     parser.add_option("--gru", action="store_true", dest="gru", default=False, help='Use GRU instead of LSTM.')
@@ -104,6 +105,19 @@ class Tagger:
         self.tagO = self.model.add_parameters((self.ntags, options.tag_lstm_dims))
 
     @staticmethod
+    def read_chunk(fname):
+        sent = []
+        for line in file(fname):
+            line = line.strip().split()
+            if not line:
+                if sent: yield sent
+                sent = []
+            else:
+                w, p, bio = line
+                sent.append((w, p, bio))
+        if sent: yield  sent
+
+    @staticmethod
     def read(fname):
         for line in file(fname):
             spl = line.strip().split()
@@ -113,6 +127,7 @@ class Tagger:
                 p = s[s.rfind('_')+1:]
                 sent.append((w,p))
             yield sent
+
 
     @staticmethod
     def read_raw(fname):
@@ -330,13 +345,20 @@ if __name__ == '__main__':
         print options.model
         tagger.load(options.model)
 
-        test = list(Tagger.read_raw(options.conll_test))
-        print 'loaded',len(test),'sentences!'
         writer = codecs.open(options.outfile, 'w')
+        test = list(Tagger.read_raw(options.conll_test) if options.input_raw else Tagger.read_chunk(options.conll_test))
+        print 'loaded',len(test),'sentences!'
         for sent in test:
             output = list()
-            pos_tags = tagger.tag_raw_sent(sent)
-            [output.append((sent[i]+'_'+pos_tags[i])) for i in xrange(len(pos_tags))]
-            writer.write(' '.join(output))
-            writer.write('\n')
+            if options.input_raw:
+                pos_tags = tagger.tag_raw_sent(sent)
+                [output.append((sent[i]+'_'+pos_tags[i])) for i in xrange(len(pos_tags))]
+                writer.write(' '.join(output))
+                writer.write('\n')
+            else:
+                sentence = [w for w,_,_ in sent]
+                pos_tags = tagger.tag_raw_sent(sentence)
+                [output.append((sent[i][0] + ' ' + pos_tags[i]+ ' '+sent[i][2])) for i in xrange(len(pos_tags))]
+                writer.write('\n'.join(output))
+                writer.write('\n\n')
         print 'done!'

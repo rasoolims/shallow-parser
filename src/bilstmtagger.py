@@ -25,19 +25,6 @@ class Chunker(Tagger):
         for i in xrange(self.chars.size()):
             self.CE.init_row(i, self.pos_tagger.CE[i].npvalue())
 
-    @staticmethod
-    def read(fname):
-        sent = []
-        for line in file(fname):
-            line = line.strip().split()
-            if not line:
-                if sent: yield sent
-                sent = []
-            else:
-                w, p, bio = line
-                sent.append((w, p, bio))
-        if sent: yield  sent
-
     def forward_semi(self, observations, ntags, trans_matrix, dct,longest):
         def log_sum_exp(scores,ln):
             npval = scores.npvalue()
@@ -169,8 +156,8 @@ class Chunker(Tagger):
         # Reverse over the backpointers to get the best path
         segments = []
         end = len(observations)-1
-        for bptrs_t in reversed(backpointers):
-            best_tag_id,start = bptrs_t[best_tag_id]
+        while end>=0:
+            best_tag_id, start = backpointers[end][best_tag_id]
             segments.append((start,end,best_tag_id))
             end = start-1
         #start = segments.pop() # Remove the start symbol
@@ -301,7 +288,7 @@ class Chunker(Tagger):
         return segments,longest
 
     def validate(self, best_dev):
-        dev = list(self.read(options.dev_file))
+        dev = list(self.read_chunk(options.dev_file))
         good = bad = 0.0
         good_pos = bad_pos = 0.0
         if options.save_best and options.dev_file:
@@ -341,7 +328,7 @@ if __name__ == '__main__':
 
     if options.conll_train != '' and options.output != '':
         if not os.path.isdir(options.output): os.mkdir(options.output)
-        train = list(Chunker.read(options.conll_train))
+        train = list(Chunker.read_chunk(options.conll_train))
         print 'load #sent:',len(train)
         words = []
         tags = []
@@ -381,7 +368,7 @@ if __name__ == '__main__':
         print options.model
         chunker.load(options.model)
 
-        test = list(Chunker.read(options.conll_test))
+        test = list(Chunker.read_chunk(options.conll_test))
         print 'loaded',len(test),'sentences!'
         writer = codecs.open(options.outfile, 'w')
         for sent in test:
