@@ -31,7 +31,7 @@ def parse_options():
     parser.add_option('--outdir', type='string', dest='output', default='')
     parser.add_option('--outfile', type='string', dest='outfile', default='')
     parser.add_option("--eval", action="store_true", dest="eval_format", default=False)
-    parser.add_option("--conll", action="store_true", dest="input_raw", help='raw input for pos tag', default=False)
+    parser.add_option("--conll", action="store_true", dest="input_conll", help='conll input for pos tag', default=False)
     parser.add_option("--activation", type="string", dest="activation", default="tanh")
     parser.add_option("--drop", action="store_true", dest="drop", default=False, help='Use dropout.')
     parser.add_option("--gru", action="store_true", dest="gru", default=False, help='Use GRU instead of LSTM.')
@@ -335,7 +335,7 @@ if __name__ == '__main__':
         options.params = os.path.join(options.output,options.params)
 
     if options.conll_test != '' and options.params != '' and options.model != '' and options.outfile != '':
-        read_raw = options.input_raw
+        read_raw = not options.input_conll
         print options.model, options.params, options.eval_format
         print 'reading params'
         with open(options.params, 'r') as paramsfp:
