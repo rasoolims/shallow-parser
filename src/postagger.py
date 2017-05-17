@@ -335,7 +335,7 @@ if __name__ == '__main__':
         options.params = os.path.join(options.output,options.params)
 
     if options.conll_test != '' and options.params != '' and options.model != '' and options.outfile != '':
-        raad_raw = options.input_raw
+        read_raw = options.input_raw
         print options.model, options.params, options.eval_format
         print 'reading params'
         with open(options.params, 'r') as paramsfp:
@@ -347,11 +347,11 @@ if __name__ == '__main__':
         tagger.load(options.model)
 
         writer = codecs.open(options.outfile, 'w')
-        test = list(Tagger.read_raw(options.conll_test) if raad_raw else Tagger.read_chunk(options.conll_test))
+        test = list(Tagger.read_raw(options.conll_test) if read_raw else Tagger.read_chunk(options.conll_test))
         print 'loaded',len(test),'sentences!'
         for sent in test:
             output = list()
-            if options.raad_raw:
+            if read_raw:
                 pos_tags = tagger.tag_raw_sent(sent)
                 [output.append((sent[i]+'_'+pos_tags[i])) for i in xrange(len(pos_tags))]
                 writer.write(' '.join(output))
