@@ -228,7 +228,7 @@ if __name__ == '__main__':
             writer.write('\n'.join(output))
             writer.write('\n\n')
         print 'done!'
-    if options.inputs != '' and options.params != '' and options.model != '':
+    if options.inputs != None and options.params != '' and options.model != '':
         print options.model, options.params, options.eval_format
         print 'reading params'
         with open(options.params, 'r') as paramsfp:
