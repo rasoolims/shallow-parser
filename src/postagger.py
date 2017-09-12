@@ -48,6 +48,7 @@ import _dynet as dy
 dyparams = dy.DynetParams()
 dyparams.from_args()
 dyparams.set_mem(options.mem)
+
 dyparams.init()
 from dynet import *
 
@@ -299,7 +300,7 @@ class Tagger:
         return best_dev
 
     def load(self, f):
-        self.model.load(f)
+        self.model.populate(f)
 
     def save(self, f):
         self.model.save(f)
