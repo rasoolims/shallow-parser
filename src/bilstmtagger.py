@@ -98,7 +98,7 @@ class Chunker(Tagger):
                 for data in train_data:
                     auto_tags = self.pos_tagger.best_pos_tags([w for w, p, bio in data])
                     for i in xrange(len(data)):
-                        data[i][1] = auto_tags[i]
+                        data[i][1] = self.vt.i2w[auto_tags[i]]
                 auto_tagged = True
             for i, s in enumerate(train_data, 1):
                 if i % 1000 == 0:
