@@ -36,7 +36,7 @@ class Chunker(Tagger):
                 sent = []
             else:
                 w, p, bio = line
-                sent.append((w, p, bio))
+                sent.append([w, p, bio])
         if sent: yield  sent
 
     def get_chunk_lstm_features(self, is_train, sent_words, words,auto_tags):
